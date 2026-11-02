@@ -270,9 +270,9 @@ def default_domain(cluster: Document, with_dns: bool) -> dict:
         "certificateManagement": {
             "@type": "Automatic",
             "acmeProviderId": "#acme",
-            # The wildcard covers the ingress hostname and every node; Let's Encrypt rejects an
-            # order that lists a name its wildcard already covers.
-            "subjectAlternativeNames": as_set([f"*.{cluster.default_domain}"]),
+            # The default domain is the ingress hostname, which its own wildcard does not cover.
+            # Nodes stay out: Let's Encrypt rejects a name the wildcard already covers.
+            "subjectAlternativeNames": as_set([cluster.default_domain, f"*.{cluster.default_domain}"]),
         },
         "dkimManagement": dkim_management_payload(dkim_algorithms()),
         "subAddressing": {"@type": "Disabled"},
