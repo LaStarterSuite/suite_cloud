@@ -29,7 +29,15 @@ from suite_cloud.api.telemetry import authenticate, otlp, webhook
 from suite_cloud.api.telemetry.quota import limits
 from suite_cloud.api.tenant import InvalidInputError
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
-from suite_cloud.telemetry import EVENT_LEVELS, EVENTS, METRICS, TELEMETRY_USER, WEBHOOK_EVENTS
+from suite_cloud.telemetry import (
+    ERROR_EVENTS,
+    EVENT_LEVELS,
+    EVENTS,
+    METRICS,
+    TELEMETRY_USER,
+    WARN_EVENTS,
+    WEBHOOK_EVENTS,
+)
 from suite_cloud.telemetry.spool import Spool
 from suite_cloud.telemetry.status import CACHE_KEY, forget_contacts
 from suite_cloud.tests.fixtures import configure_settings, production_logging
@@ -253,6 +261,8 @@ class TestWebhook(PushTestCase):
             "events", [webhook_event("1"), webhook_event("2", "auth.error", accountName="jane@acme.test")]
         )
         self.push("errors", [webhook_event("3", "store.data-corruption")])
+        warnings = [webhook_event("7", "queue.back-pressure"), webhook_event("8", "store.data-corruption")]
+        self.assertEqual(self.push("warnings", warnings)["accepted"], 1)
         # What Stalwart logged before its WebHooks existed reaches each of them after a start.
         startup = [webhook_event("4", "network.listen-start"), webhook_event("5", "delivery.delivered")]
         self.assertEqual(self.push("errors", startup)["accepted"], 0)
@@ -266,7 +276,12 @@ class TestWebhook(PushTestCase):
         rows = sorted(self.rows(), key=lambda row: row["event"])
         self.assertEqual(
             [(row["event"], row["level"]) for row in rows],
-            [("auth.error", "error"), ("delivery.delivered", "info"), ("store.data-corruption", "error")],
+            [
+                ("auth.error", "error"),
+                ("delivery.delivered", "info"),
+                ("queue.back-pressure", "warn"),
+                ("store.data-corruption", "error"),
+            ],
         )
         delivered = rows[1]
         self.assertEqual(delivered["timestamp"], datetime(2026, 10, 20, 9, 59))
@@ -382,6 +397,9 @@ class TestEventList(PushTestCase):
         self.assertEqual(set(WEBHOOK_EVENTS), set(EVENT_LEVELS))
         self.assertTrue(set(EVENT_LEVELS.values()) <= {"info", "warn", "error"})
         self.assertIn("server.startup-error", WEBHOOK_EVENTS)
+        # Each event is on one WebHook only, so none is sent twice.
+        lists = (set(WEBHOOK_EVENTS), set(ERROR_EVENTS), set(WARN_EVENTS))
+        self.assertEqual(sum(map(len, lists)), len(set.union(*lists)))
 
         workbook = Path(__file__).resolve().parents[1] / "insights_workbook" / "stalwart" / "stalwart.json"
         text = workbook.read_text()

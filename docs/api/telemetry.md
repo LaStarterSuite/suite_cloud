@@ -37,14 +37,15 @@ Content-Type: application/json
 {"events": [{"id": "...", "createdAt": "2026-10-20T09:59:00Z", "type": "delivery.delivered", "data": {"queueId": 1234, "remoteIp": "198.51.100.7", "spanId": 42}}]}
 ```
 
-Each server has two WebHooks:
+Each server has three WebHooks:
 
 | `stream` | Sends | Row level |
 | --- | --- | --- |
 | `events` | The events the Stalwart workbook and the alerts read: `WEBHOOK_EVENTS` in `suite_cloud/telemetry/__init__.py` | The level Stalwart logs the event at, from `EVENT_LEVELS` beside the list |
 | `errors` | Every other event Stalwart logs at error level: `ERROR_EVENTS`, taken from `EventType::level()` in Stalwart's `trc` crate | `error` |
+| `warnings` | Every other event Stalwart logs at warn level: `WARN_EVENTS`, from the same table | `warn` |
 
-Stalwart ignores the `level` of a WebHook. Only its event list decides what it sends, so both WebHooks use `eventsPolicy: include`. A new Stalwart release can add error events, so check `ERROR_EVENTS` when you upgrade. Right after a start, Stalwart also hands every WebHook the events it logged before the WebHooks existed. Suite Cloud keeps only the events on the stream's own list.
+Stalwart ignores the `level` of a WebHook. Only its event list decides what it sends, so every WebHook uses `eventsPolicy: include`. Each WebHook has its own queue, so a burst of warnings, such as rate-limit events during an attack, does not hold back the errors. Stalwart never hands `telemetry.webhook-error` to a WebHook, so `WARN_EVENTS` leaves it out. A new Stalwart release can add error or warn events, so check `ERROR_EVENTS` and `WARN_EVENTS` when you upgrade. Right after a start, Stalwart also hands every WebHook the events it logged before the WebHooks existed. Suite Cloud keeps only the events on the stream's own list.
 
 An event becomes one row: `timestamp` from `createdAt`, `event` from `type`, `span_id` from `data.spanId` and `data` without `spanId`. The event names and the `data` keys are the ones Stalwart writes in its log file, so the dashboards read them as before. An event that does not parse is skipped. The request still succeeds, and one Error Log per request counts the skipped events. A refused request would make Stalwart send the whole batch again.
 
@@ -67,14 +68,14 @@ Stalwart pushes its metrics every **Metrics Push Interval (Seconds)**, 60 by def
 
 | Status | Type | Meaning |
 | --- | --- | --- |
-| 400 | `InvalidInputError` | A `stream` other than `events` or `errors`, more than 65,536 events, or a body that is not an OTLP metrics request |
+| 400 | `InvalidInputError` | A `stream` other than `events`, `errors` or `warnings`, more than 65,536 events, or a body that is not an OTLP metrics request |
 | 401 | `AuthenticationError` | The key or secret is wrong, or telemetry is off |
 | 403 | `PermissionError` | A verb other than POST, or a token for the other kind of method |
 | 413 | | The body is larger than the site's `max_file_size`, 25 MB by default |
 | 429 | `TooManyRequestsError` | The server sent more requests in the current minute than **Agent Requests per Minute** allows |
 | 500 | | The batch could not be written, for example because the disk is full. Nothing was staged |
 
-**Agent Requests per Minute** (300 by default) counts every request of one server in fixed one-minute windows: WebHooks, OTLP and the Agent's sending-limit calls together. Two WebHooks and the metrics push make about 25 requests a minute.
+**Agent Requests per Minute** (300 by default) counts every request of one server in fixed one-minute windows: WebHooks, OTLP and the Agent's sending-limit calls together. Three WebHooks and the metrics push make at most 37 requests a minute.
 
 ## Agent data
 

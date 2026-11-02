@@ -6,7 +6,7 @@ from frappe.tests import IntegrationTestCase
 
 from suite_cloud.mail.cluster import egress, plan, telemetry
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
-from suite_cloud.telemetry import ERROR_EVENTS, WEBHOOK_EVENTS
+from suite_cloud.telemetry import ERROR_EVENTS, WARN_EVENTS, WEBHOOK_EVENTS
 from suite_cloud.tests.fixtures import configure_settings
 
 TOKEN = {
@@ -39,9 +39,10 @@ class TestTelemetryPlan(IntegrationTestCase):
         make_node(self.cluster, ipv4="203.0.113.11")  # pending: not running, so it does not count
         on = by_object(plan.cluster_plan(self.cluster))
         self.assertEqual(on["WebHook"]["matchOn"], ["url"])
-        events, errors = (
+        events, errors, warnings = (
             on["WebHook"]["value"]["telemetry-events"],
             on["WebHook"]["value"]["telemetry-errors"],
+            on["WebHook"]["value"]["telemetry-warnings"],
         )
         base = "https://cloud.example.test/api/v2/method/suite_cloud.api.telemetry."
         self.assertEqual(
@@ -53,9 +54,13 @@ class TestTelemetryPlan(IntegrationTestCase):
             (errors["url"], errors["level"], errors["eventsPolicy"]),
             (f"{base}webhook?stream=errors", "error", "include"),
         )
+        self.assertEqual(
+            (warnings["url"], warnings["level"], warnings["eventsPolicy"]),
+            (f"{base}webhook?stream=warnings", "warn", "include"),
+        )
         self.assertEqual(set(events["events"]), set(WEBHOOK_EVENTS))
         self.assertEqual(set(errors["events"]), set(ERROR_EVENTS))
-        self.assertFalse(set(WEBHOOK_EVENTS) & set(ERROR_EVENTS))
+        self.assertEqual(set(warnings["events"]), set(WARN_EVENTS))
         self.assertEqual(
             (events["httpAuth"], events["signatureKey"], events["throttle"], events["discardAfter"]),
             (TOKEN, {"@type": "None"}, 5000, 3_600_000),

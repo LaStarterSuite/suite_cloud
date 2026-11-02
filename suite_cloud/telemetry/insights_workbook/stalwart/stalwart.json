@@ -2357,6 +2357,7 @@
     "number_column_options": [
      {},
      {},
+     {},
      {}
     ],
     "number_columns": [
@@ -2368,6 +2369,15 @@
       },
       "id": "Errors",
       "measure_name": "Errors"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count_if(level == 'warn')",
+       "type": "expression"
+      },
+      "id": "Warnings",
+      "measure_name": "Warnings"
      },
      {
       "data_type": "Integer",
@@ -5289,6 +5299,67 @@
    "sort_order": 51,
    "title": "Users and Domains",
    "workbook": "stalwart"
+  },
+  "stalwart-warnings-and-errors": {
+   "chart_type": "Bar",
+   "config": {
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 100,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "timestamp",
+       "type": "column"
+      },
+      "direction": "asc"
+     }
+    ],
+    "x_axis": {
+     "dimension": {
+      "column_name": "timestamp",
+      "data_type": "Datetime",
+      "dimension_name": "timestamp",
+      "granularity": "day"
+     }
+    },
+    "y_axis": {
+     "series": [
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count_if(level == 'warn')",
+         "type": "expression"
+        },
+        "measure_name": "Warnings"
+       }
+      },
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count_if(level == 'error')",
+         "type": "expression"
+        },
+        "measure_name": "Errors"
+       }
+      }
+     ],
+     "show_data_labels": false,
+     "stack": true
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": null,
+   "name": "stalwart-warnings-and-errors",
+   "query": "stalwart-events",
+   "sort_order": 56,
+   "title": "Warnings and Errors",
+   "workbook": "stalwart"
   }
  },
  "creation": "2026-10-21 12:17:24.468223",
@@ -6400,7 +6471,8 @@
       "stalwart-hosts": "`stalwart-events`.`timestamp`",
       "stalwart-process-memory-mib": "`stalwart-metrics`.`timestamp`",
       "stalwart-startups": "`stalwart-events`.`timestamp`",
-      "stalwart-store-errors": "`stalwart-events`.`timestamp`"
+      "stalwart-store-errors": "`stalwart-events`.`timestamp`",
+      "stalwart-warnings-and-errors": "`stalwart-events`.`timestamp`"
      },
      "type": "filter"
     },
@@ -6422,7 +6494,8 @@
       "stalwart-hosts": "`stalwart-events`.`host`",
       "stalwart-process-memory-mib": "`stalwart-metrics`.`host`",
       "stalwart-startups": "`stalwart-events`.`host`",
-      "stalwart-store-errors": "`stalwart-events`.`host`"
+      "stalwart-store-errors": "`stalwart-events`.`host`",
+      "stalwart-warnings-and-errors": "`stalwart-events`.`host`"
      },
      "type": "filter"
     },
@@ -6431,7 +6504,7 @@
      "layout": {
       "h": 4,
       "i": "health_readings-0",
-      "w": 7,
+      "w": 5,
       "x": 0,
       "y": 2
      },
@@ -6442,9 +6515,21 @@
      "chart": "stalwart-health-readings",
      "layout": {
       "h": 4,
+      "i": "health_readings-1",
+      "w": 5,
+      "x": 5,
+      "y": 2
+     },
+     "reading": "Warnings",
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-health-readings",
+     "layout": {
+      "h": 4,
       "i": "health_readings-2",
-      "w": 7,
-      "x": 7,
+      "w": 5,
+      "x": 10,
       "y": 2
      },
      "reading": "Startups",
@@ -6455,8 +6540,8 @@
      "layout": {
       "h": 4,
       "i": "health_readings-3",
-      "w": 6,
-      "x": 14,
+      "w": 5,
+      "x": 15,
       "y": 2
      },
      "reading": "Startup Errors",
@@ -6474,13 +6559,24 @@
      "type": "chart"
     },
     {
+     "chart": "stalwart-warnings-and-errors",
+     "layout": {
+      "h": 20,
+      "i": "warnings_and_errors",
+      "w": 10,
+      "x": 10,
+      "y": 6
+     },
+     "type": "chart"
+    },
+    {
      "chart": "stalwart-error-events",
      "layout": {
       "h": 20,
       "i": "error_events",
       "w": 10,
-      "x": 10,
-      "y": 6
+      "x": 0,
+      "y": 26
      },
      "type": "chart"
     },
@@ -6490,7 +6586,7 @@
       "h": 20,
       "i": "store_errors",
       "w": 10,
-      "x": 0,
+      "x": 10,
       "y": 26
      },
      "type": "chart"
@@ -6501,8 +6597,8 @@
       "h": 20,
       "i": "startups",
       "w": 10,
-      "x": 10,
-      "y": 26
+      "x": 0,
+      "y": 46
      },
      "type": "chart"
     },
@@ -6511,8 +6607,8 @@
      "layout": {
       "h": 20,
       "i": "hosts",
-      "w": 20,
-      "x": 0,
+      "w": 10,
+      "x": 10,
       "y": 46
      },
      "type": "chart"

@@ -1,10 +1,10 @@
-"""What Stalwart pushes to Suite Cloud on its own: events through two WebHooks and metrics over
+"""What Stalwart pushes to Suite Cloud on its own: events through three WebHooks and metrics over
 OTLP, each request carrying the sending server's telemetry token.
 
 Stalwart reads the token from ``SUITE_CLOUD_TELEMETRY_TOKEN`` in each server's ``stalwart.env``,
 and a reload that names a variable a running server lacks fails. So the plan turns the push on
 only once every running server of the cluster, or the gateway, has the token installed; until
-then it writes both WebHooks switched off and OTLP disabled, which reload anywhere.
+then it writes the WebHooks switched off and OTLP disabled, which reload anywhere.
 """
 
 from typing import TYPE_CHECKING
@@ -13,7 +13,7 @@ import frappe
 from frappe.utils import cint, get_url
 
 from suite_cloud.mail.cluster.plan import TELEMETRY_TOKEN_VARIABLE, as_set
-from suite_cloud.telemetry import ERROR_EVENTS, WEBHOOK_EVENTS
+from suite_cloud.telemetry import ERROR_EVENTS, WARN_EVENTS, WEBHOOK_EVENTS
 from suite_cloud.telemetry.agent.build import is_telemetry_enabled
 from suite_cloud.utils import get_config
 
@@ -72,13 +72,14 @@ def is_push_enabled(owner: Document) -> bool:
 
 
 def get_operations(owner: Document) -> list[dict]:
-    """The two WebHooks and the metrics push of a cluster or gateway plan. Nothing reads the
+    """The three WebHooks and the metrics push of a cluster or gateway plan. Nothing reads the
     Prometheus endpoint, which sits on the public listener, so it stays off."""
 
     enabled = is_push_enabled(owner)
     webhooks = {
         "telemetry-events": webhook("events", "info", WEBHOOK_EVENTS, enabled),
         "telemetry-errors": webhook("errors", "error", ERROR_EVENTS, enabled),
+        "telemetry-warnings": webhook("warnings", "warn", WARN_EVENTS, enabled),
     }
     metrics = {
         "openTelemetry": otlp_exporter() if enabled else {"@type": "Disabled"},
@@ -91,8 +92,9 @@ def get_operations(owner: Document) -> list[dict]:
 
 
 def webhook(stream: str, level: str, events: tuple[str, ...], enabled: bool) -> dict:
-    """``events`` sends the events the dashboards read; ``errors`` every other error. Stalwart
-    ignores a WebHook's level, so only the list decides what it sends."""
+    """``events`` sends the events the dashboards read; ``errors`` and ``warnings`` every other
+    error and warning, each in its own queue. Stalwart ignores a WebHook's level, so only the
+    list decides what it sends."""
 
     discard_after = cint(get_config("webhook_discard_after_minutes")) or DEFAULT_DISCARD_AFTER_MINUTES
     return {

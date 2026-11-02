@@ -122,9 +122,9 @@ cluster, node and gateway forms show when each server last reported.
 
 ### Telemetry
 
-Stalwart pushes its own events and metrics to the [telemetry API](docs/api/telemetry.md). Two WebHooks send the events: one lists the events the dashboards read, the other every other event Stalwart logs at error level. OTLP sends the metrics every **Metrics Push Interval (Seconds)**. The cluster plan holds both, and the gateway plan holds its own.
+Stalwart pushes its own events and metrics to the [telemetry API](docs/api/telemetry.md). Three WebHooks send the events: one lists the events the dashboards read, one every other event Stalwart logs at error level, and one every other event it logs at warn level. OTLP sends the metrics every **Metrics Push Interval (Seconds)**. The cluster plan holds both, and the gateway plan holds its own.
 
-Each node and gateway has its own telemetry token, made with the record. Provisioning and upgrades write it to `/etc/stalwart/stalwart.env` as `SUITE_CLOUD_TELEMETRY_TOKEN`, and each request carries the token of the server that sent it. A config reload that names a variable a running server lacks fails. So the plan switches the push on only once every Provisioned, Active and Draining node of the cluster, or the gateway, has **Telemetry Token Installed**. Until then it writes both WebHooks switched off and OTLP disabled.
+Each node and gateway has its own telemetry token, made with the record. Provisioning and upgrades write it to `/etc/stalwart/stalwart.env` as `SUITE_CLOUD_TELEMETRY_TOKEN`, and each request carries the token of the server that sent it. A config reload that names a variable a running server lacks fails. So the plan switches the push on only once every Provisioned, Active and Draining node of the cluster, or the gateway, has **Telemetry Token Installed**. Until then it writes the WebHooks switched off and OTLP disabled.
 
 OTLP starts only when Stalwart starts. These jobs restart Stalwart:
 

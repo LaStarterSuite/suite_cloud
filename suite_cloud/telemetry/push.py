@@ -13,13 +13,18 @@ import orjson
 from opentelemetry.proto.collector.metrics.v1.metrics_service_pb2 import ExportMetricsServiceRequest
 from opentelemetry.proto.common.v1.common_pb2 import AnyValue
 
-from suite_cloud.telemetry import ERROR_EVENTS, EVENT_LEVELS
+from suite_cloud.telemetry import ERROR_EVENTS, EVENT_LEVELS, WARN_EVENTS
 
 EVENT_NAME_LIMIT = 128
 SPAN_ID_LIMIT = 64
 # What each WebHook lists. Right after a start Stalwart also hands every WebHook the events it
-# logged before the WebHooks existed, which would land as errors on the errors stream.
-STREAM_EVENTS = {"events": frozenset(EVENT_LEVELS), "errors": frozenset(ERROR_EVENTS)}
+# logged before the WebHooks existed, which would land on a stream that does not list them.
+STREAM_EVENTS = {
+    "events": frozenset(EVENT_LEVELS),
+    "errors": frozenset(ERROR_EVENTS),
+    "warnings": frozenset(WARN_EVENTS),
+}
+LEVELS = {**dict.fromkeys(ERROR_EVENTS, "error"), **dict.fromkeys(WARN_EVENTS, "warn"), **EVENT_LEVELS}
 
 
 class Skipped(ValueError):
@@ -42,13 +47,13 @@ def get_metrics_batch_id(server: str, body: bytes) -> str:
 
 def get_event_rows(events: list, stream: str) -> tuple[list[dict], list[str]]:
     """``{id, createdAt, type, data}`` each. The events stream carries the listed events at the
-    level Stalwart logs them; the errors stream every other event logged at error level. An event
-    the stream does not list is left out."""
+    level Stalwart logs them; the errors and warnings streams every other event logged at error
+    or warn level. An event the stream does not list is left out."""
 
     rows, problems = [], []
     for index, event in enumerate(events):
         try:
-            row = parse_event(event, stream)
+            row = parse_event(event)
         except Skipped as problem:
             problems.append(f"events[{index}]: {problem}")
             continue
@@ -57,7 +62,7 @@ def get_event_rows(events: list, stream: str) -> tuple[list[dict], list[str]]:
     return rows, problems
 
 
-def parse_event(event: object, stream: str) -> dict:
+def parse_event(event: object) -> dict:
     if not isinstance(event, dict):
         raise Skipped("not an object")
     name = event.get("type")
@@ -71,7 +76,7 @@ def parse_event(event: object, stream: str) -> dict:
     span_id = None if span_id is None else str(span_id)[:SPAN_ID_LIMIT]
     return {
         "timestamp": parse_timestamp(event.get("createdAt")),
-        "level": EVENT_LEVELS.get(name, "error"),
+        "level": LEVELS.get(name, "error"),
         "event": name,
         "span_id": span_id,
         "data": orjson.dumps(data).decode(),
