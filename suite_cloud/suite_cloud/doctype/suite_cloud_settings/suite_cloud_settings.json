@@ -548,8 +548,8 @@
    "reqd": 1
   },
   {
-   "default": "60",
-   "description": "Stalwart drops events it could not deliver for this long. Covers a Suite Cloud deploy.",
+   "default": "10",
+   "description": "Stalwart drops events it could not deliver for this long. Covers a Suite Cloud deploy. Stalwart resends everything it holds in one request, so a longer time can build a backlog too large to deliver.",
    "fieldname": "webhook_discard_after_minutes",
    "fieldtype": "Int",
    "label": "Webhook Discard After (Minutes)",

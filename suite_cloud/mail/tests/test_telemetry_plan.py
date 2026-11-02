@@ -22,7 +22,7 @@ def by_object(operations: list[dict]) -> dict:
 class TestTelemetryPlan(IntegrationTestCase):
     def setUp(self) -> None:
         configure_settings(
-            enable_telemetry=1, public_url="https://cloud.example.test", webhook_discard_after_minutes=60
+            enable_telemetry=1, public_url="https://cloud.example.test", webhook_discard_after_minutes=10
         )
         self.cluster = make_cluster()
         self.node = make_node(self.cluster)
@@ -63,7 +63,7 @@ class TestTelemetryPlan(IntegrationTestCase):
         self.assertEqual(set(warnings["events"]), set(WARN_EVENTS))
         self.assertEqual(
             (events["httpAuth"], events["signatureKey"], events["throttle"], events["discardAfter"]),
-            (TOKEN, {"@type": "None"}, 5000, 3_600_000),
+            (TOKEN, {"@type": "None"}, 30_000, 600_000),
         )
         self.assertEqual(
             on["Metrics"]["value"],

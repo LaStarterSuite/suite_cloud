@@ -38,7 +38,7 @@ from suite_cloud.utils import get_config, log_error
 API_PATHS = ("/api/v2/method/suite_cloud.api.telemetry.", "/api/method/suite_cloud.api.telemetry.")
 DEFAULT_REQUESTS_PER_MINUTE = 300  # the settings' defaults, used until the site has them
 RECORDS_PER_REQUEST = 5000  # the usage records of one sending-limit call
-WEBHOOK_EVENT_LIMIT = 65536  # Stalwart's webhook queue holds no more
+WEBHOOK_EVENT_LIMIT = 65536  # what one request may stage; Stalwart sends every waiting event at once
 PUSH_METHODS = ("webhook", "otlp")
 SOURCE = "stalwart"
 SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")

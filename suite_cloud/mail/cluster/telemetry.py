@@ -22,10 +22,10 @@ if TYPE_CHECKING:
 
 RUNNING_STATUSES = ("Provisioned", "Active", "Draining")  # Stalwart runs normally, env file and all
 API_METHOD = "/api/v2/method/suite_cloud.api.telemetry."
-WEBHOOK_THROTTLE_MS = 5000
+WEBHOOK_THROTTLE_MS = 30_000  # the warehouse loads every 5 minutes, so sooner buys nothing
 WEBHOOK_TIMEOUT_MS = 30000
 OTLP_TIMEOUT_MS = 10000
-DEFAULT_DISCARD_AFTER_MINUTES = 60
+DEFAULT_DISCARD_AFTER_MINUTES = 10
 DEFAULT_PUSH_INTERVAL_SECONDS = 60
 
 

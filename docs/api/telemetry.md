@@ -27,7 +27,7 @@ The token opens only `webhook` and `otlp`. The Agent sends its cluster's **Agent
 
 ## WebHook
 
-Stalwart sends events in batches of up to 65,536, at most one request every 5 seconds per WebHook:
+Stalwart sends every event waiting for a WebHook in one request, at most one request every 30 seconds per WebHook. The warehouse loads every five minutes, so more frequent requests would only stage more small files:
 
 ```http
 POST /api/v2/method/suite_cloud.api.telemetry.webhook?stream=events
@@ -49,7 +49,7 @@ Stalwart ignores the `level` of a WebHook. Only its event list decides what it s
 
 An event becomes one row: `timestamp` from `createdAt`, `event` from `type`, `span_id` from `data.spanId` and `data` without `spanId`. The event names and the `data` keys are the ones Stalwart writes in its log file, so the dashboards read them as before. An event that does not parse is skipped. The request still succeeds, and one Error Log per request counts the skipped events. A refused request would make Stalwart send the whole batch again.
 
-The answer is `{"data": {"accepted": 2, "skipped": 0}}`. The batch id is a UUIDv5 derived from the server, the first and last event ids and the event count. A batch sent again replaces its staged file, and the warehouse loads a batch once.
+The answer is `{"data": {"accepted": 2, "skipped": 0}}`. The batch id is a UUIDv5 derived from the server, the first and last event ids and the event count. The same request sent again replaces its staged file, and the warehouse loads a batch once. Stalwart does not send a failed batch again on its own, though: it adds the newer events, so the retry gets a new id. A request that times out after Suite Cloud staged it therefore stores its events twice. Suite Cloud answers in milliseconds, far inside the 30-second timeout, so this takes a stalled request.
 
 ## OTLP
 
@@ -75,7 +75,7 @@ Stalwart pushes its metrics every **Metrics Push Interval (Seconds)**, 60 by def
 | 429 | `TooManyRequestsError` | The server sent more requests in the current minute than **Agent Requests per Minute** allows |
 | 500 | | The batch could not be written, for example because the disk is full. Nothing was staged |
 
-**Agent Requests per Minute** (300 by default) counts every request of one server in fixed one-minute windows: WebHooks, OTLP and the Agent's sending-limit calls together. Three WebHooks and the metrics push make at most 37 requests a minute.
+**Agent Requests per Minute** (300 by default) counts every request of one server in fixed one-minute windows: WebHooks, OTLP and the Agent's sending-limit calls together. Three WebHooks and the metrics push make at most 7 requests a minute.
 
 ## Agent data
 
@@ -83,7 +83,7 @@ The agents shipped Stalwart's log lines and the machine's metrics until Stalwart
 
 ## Losses
 
-Stalwart keeps undelivered events in memory and tries again until **Webhook Discard After (Minutes)**, 60 by default, which covers a Suite Cloud deploy. Events are lost when Stalwart restarts, when Suite Cloud is down for longer than that, or when more than 65,536 events wait. A change to the metrics interval, the URL or the token takes effect when Stalwart restarts. The log files on each server, kept for 14 days, stay the source of truth for debugging.
+Stalwart keeps undelivered events in memory and tries again every 30 seconds until **Webhook Discard After (Minutes)**, 10 by default, which covers a Suite Cloud deploy. A retry is never split: Stalwart sends the failed events again together with every newer one, so the request keeps growing until events pass the discard time. A batch of more than 65,536 events, or a body over the site's `max_file_size`, is refused, and so is every retry after it until enough events are discarded. A short discard time keeps that backlog small. Events are lost when Stalwart restarts (up to 30 seconds of them), when Suite Cloud is down for longer than the discard time, or while the backlog is too large to accept. A change to the metrics interval, the URL or the token takes effect when Stalwart restarts. The log files on each server, kept for 14 days, stay the source of truth for debugging.
 
 ## Sending limits
 
