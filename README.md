@@ -115,7 +115,8 @@ contact email; everything else sits at permission level 1, for System Managers.
    hostname's DNS as soon as Stalwart reports it active.
 
 Day-to-day buttons: **Drain** takes a node out of DNS before maintenance, **Upgrade Nodes** rolls a
-new Stalwart version out one node at a time, **Sync Config** pushes the generated configuration
+new Stalwart version out one node at a time (each node is drained first, except the last one in the
+cluster hostname's DNS, which the health check after the upgrade needs), **Sync Config** pushes the generated configuration
 again, **Check Drift** reports what differs from it without changing anything, and **Upgrade Agents**
 installs each server's telemetry token and the current [Suite Cloud Agent](docs/agent.md) build; the
 cluster, node and gateway forms show when each server last reported.
