@@ -17,54 +17,22 @@ type Config struct {
 	Node       Node       `json:"node"`
 	StateDir   string     `json:"state_dir"`
 	LogLevel   string     `json:"log_level"`
-	Logs       []LogDef   `json:"logs"`
-	Metrics    Metrics    `json:"metrics"`
 	Quota      *Quota     `json:"quota,omitempty"`
 }
 
-// SuiteCloud is where batches go and the limits the site enforces on them.
+// SuiteCloud is where requests go and the limits the site enforces on them.
 type SuiteCloud struct {
 	URL                   string `json:"url"`
 	Secret                string `json:"secret"`
 	RequestsPerMinute     int    `json:"requests_per_minute"`
-	RecordsPerRequest     int    `json:"records_per_request"`
 	MaxAttempts           int    `json:"max_attempts"`
 	RequestTimeoutSeconds int    `json:"request_timeout_seconds"`
 }
 
-// Node identifies this machine in every batch; host_ip must be the address Suite Cloud stores.
+// Node identifies this machine; the quota calls send host_ip, which must be the address Suite Cloud stores.
 type Node struct {
-	Source   string `json:"source"`
 	HostIP   string `json:"host_ip"`
 	Hostname string `json:"hostname"`
-}
-
-// LogDef is one set of log files to tail.
-type LogDef struct {
-	Name                 string `json:"name"`
-	Path                 string `json:"path"`
-	Format               string `json:"format"`
-	Source               string `json:"source,omitempty"`
-	ShipExisting         bool   `json:"ship_existing"`
-	DeleteAfterDays      int    `json:"delete_after_days"`
-	PollIntervalSeconds  int    `json:"poll_interval_seconds"`
-	FlushIntervalSeconds int    `json:"flush_interval_seconds"`
-}
-
-type Metrics struct {
-	Enabled         *bool            `json:"enabled"`
-	IntervalSeconds int              `json:"interval_seconds"`
-	Mounts          []string         `json:"mounts"`
-	Stalwart        *StalwartMetrics `json:"stalwart,omitempty"`
-}
-
-// StalwartMetrics is Stalwart's Prometheus endpoint on this node, behind basic auth.
-type StalwartMetrics struct {
-	URL           string `json:"url"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	TLSServerName string `json:"tls_server_name"`
-	VerifyTLS     *bool  `json:"verify_tls"`
 }
 
 // Quota is the sending-limit hook Stalwart calls on this node, and where its counters live.
@@ -110,7 +78,6 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) ApplyDefaults() {
 	setInt(&c.SuiteCloud.RequestsPerMinute, 300)
-	setInt(&c.SuiteCloud.RecordsPerRequest, 5000)
 	setInt(&c.SuiteCloud.MaxAttempts, 8)
 	setInt(&c.SuiteCloud.RequestTimeoutSeconds, 60)
 	if c.Node.Hostname == "" {
@@ -122,50 +89,11 @@ func (c *Config) ApplyDefaults() {
 	if c.LogLevel == "" {
 		c.LogLevel = "info"
 	}
-	for i := range c.Logs {
-		log := &c.Logs[i]
-		if log.Source == "" {
-			log.Source = c.Node.Source
-		}
-		setInt(&log.PollIntervalSeconds, 1)
-		setInt(&log.FlushIntervalSeconds, 5)
-	}
-	if c.Metrics.Enabled == nil {
-		c.Metrics.Enabled = new(bool)
-		*c.Metrics.Enabled = true
-	}
-	setInt(&c.Metrics.IntervalSeconds, 60)
-	if len(c.Metrics.Mounts) == 0 {
-		c.Metrics.Mounts = []string{"/"}
-	}
-	if s := c.Metrics.Stalwart; s != nil {
-		if s.TLSServerName == "" {
-			s.TLSServerName = c.Node.Hostname
-		}
-		if s.VerifyTLS == nil {
-			s.VerifyTLS = new(bool)
-			*s.VerifyTLS = true
-		}
-	}
 	if q := c.Quota; q != nil {
 		setInt(&q.LimitsPollSeconds, 60)
 		setInt(&q.UsagePushSeconds, 60)
 	}
 }
-
-func (c *Config) RequestTimeout() time.Duration {
-	return time.Duration(c.SuiteCloud.RequestTimeoutSeconds) * time.Second
-}
-
-func (l LogDef) PollInterval() time.Duration {
-	return time.Duration(l.PollIntervalSeconds) * time.Second
-}
-func (l LogDef) FlushInterval() time.Duration {
-	return time.Duration(l.FlushIntervalSeconds) * time.Second
-}
-
-func (m Metrics) IsEnabled() bool         { return m.Enabled != nil && *m.Enabled }
-func (m Metrics) Interval() time.Duration { return time.Duration(m.IntervalSeconds) * time.Second }
 
 func (q Quota) LimitsPollInterval() time.Duration {
 	return time.Duration(q.LimitsPollSeconds) * time.Second
@@ -173,8 +101,6 @@ func (q Quota) LimitsPollInterval() time.Duration {
 func (q Quota) UsagePushInterval() time.Duration {
 	return time.Duration(q.UsagePushSeconds) * time.Second
 }
-
-func (s StalwartMetrics) ShouldVerifyTLS() bool { return s.VerifyTLS == nil || *s.VerifyTLS }
 
 func setInt(field *int, value int) {
 	if *field == 0 {
