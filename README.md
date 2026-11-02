@@ -34,12 +34,12 @@ The app has three modules, so one CODEOWNERS line can cover each product:
 | --- | --- | --- |
 | **Suite Cloud** | `suite_cloud/suite_cloud` | What every hosted product shares: DNS Zone, DNS Record, Server Job, Suite Tenant, Suite Cloud Settings, plus `provisioning` (Ansible over SSH) and `dns` (provider client, resolver). |
 | **Mail** | `suite_cloud/mail` | The mail product: Stalwart Store, Cluster, Node, Egress Gateway and IP Pool, the mail directory (Mail Domain, Mail Account, Mail Group, Mailing List), and the `stalwart`, `cluster` and `tenancy` packages. |
-| **Telemetry** | `suite_cloud/telemetry` | The logs, traces and metrics the agents on the nodes push: the API that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and the `agent` package that builds the Suite Cloud Agent (the Go program in `agent/`) and installs it on the nodes. |
+| **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and the `agent` package that builds the Suite Cloud Agent (the Go program in `agent/`) and installs it with the telemetry tokens. |
 | **Hosting** | `suite_cloud/hosting` | Suite sites on Frappe Cloud: Region, Virtual Machine, Suite Site, Suite Tenant Request, the `central` clients (Central, Pilot, the site's REST API) and the `machines`, `sites`, `domains` and `capacity` steps. |
 
 The tenant-facing API is split the same way: `suite_cloud.api.tenant` for what any product needs
 (authentication, `ping`, the tenant profile) and `suite_cloud.api.mail` for the mail directory.
-`suite_cloud.api.telemetry` is for the agents on the nodes, not for tenants.
+`suite_cloud.api.telemetry` is for Stalwart and the agents on the nodes, not for tenants.
 
 ## The pieces
 
@@ -62,9 +62,9 @@ The tenant-facing API is split the same way: `suite_cloud.api.tenant` for what a
 | **Suite Site** | A Suite site on a server: waiting in the region's pool, or assigned to a tenant, connected to Suite Cloud, given the domain `<label>.<site zone>` and a mail domain `<label>.<tenant mail zone>`, and then invites the tenant's owner. |
 | **Suite Tenant Request** | One request for a hosted workspace: the email, the organization, and a label made from it (Acme Inc. gives acme, or acme-2 when taken) unless one is given. Once the site can send mail, it invites the owner to an account at the tenant's mail domain, and the owner chooses their password when they accept. A signup through the public API confirms its email with a one-time code; one an operator creates in the desk is processed at once. Its Progress table lists every step from the code to the owner's invite, with when it ran and how long it took, and the form shows a progress bar while it runs. |
 | **Tenant Email** | One email Suite Cloud sent for a tenant's site: its type (e.g. `password-reset`), recipient, the Email Account that sent it, and whether it was sent. Kept 90 days. |
-| **Suite Cloud Settings** | Defaults: DNS time-to-live, Stalwart version and download URLs, certificate settings, the public URL of this Suite Cloud, job timeout, the outgoing Email Account each tenant type's sites send through, and the telemetry secret (with the previous one kept for a day after a rotation), retention, request and batch limits, and alert thresholds and recipients. |
-| **Telemetry** | Not a record but a store: the events and metrics the agent on each node pushes to the [telemetry API](docs/api/telemetry.md), kept as the `events` and `metrics` tables of the `suite_cloud_telemetry` data source in Frappe Insights, which Suite Cloud requires, beside `nodes` and `mail_domains` copies of the Stalwart Node, Egress Gateway (a node with the role `gateway`) and Mail Domain records so a dashboard can group by cluster or tenant. Every batch is staged as a parquet file under the site's private files and loaded every five minutes; rows older than the retention are deleted daily. The shipped **Stalwart Mail** Insights workbook holds the dashboards: Delivery, Deliverability, Authentication, Spam, SMTP, Security, Ingest, Capacity, Node Health, Tenants, Clusters, and DMARC and TLS, which read the stored DMARC and TLS reports through Insights' Site DB source. The shipped **Machines** workbook shows CPU, load, memory, disk and network of every node from the `host.*` metrics the agents report. |
-| **Telemetry Alert** | One condition the five-minute check found in the telemetry: a Silent Host that reported in the last day but sent nothing for the configured minutes, or an Error Rate over the configured share of a node's events in the last hour. Resolved by the check when the condition clears, or by hand for a node taken out of service; the configured recipients are mailed on both. |
+| **Suite Cloud Settings** | Defaults: DNS time-to-live, Stalwart version and download URLs, certificate settings, the public URL of this Suite Cloud, job timeout, the outgoing Email Account each tenant type's sites send through, and the telemetry switch, retention, request limit, metrics interval, webhook discard time, and alert thresholds and recipients. |
+| **Telemetry** | Not a record but a store: the events and metrics Stalwart on each node and gateway pushes to the [telemetry API](docs/api/telemetry.md), kept as the `events` and `metrics` tables of the `suite_cloud_telemetry` data source in Frappe Insights, which Suite Cloud requires, beside `nodes` and `mail_domains` copies of the Stalwart Node, Egress Gateway (a node with the role `gateway`) and Mail Domain records so a dashboard can group by cluster or tenant. Every batch is staged as a parquet file under the site's private files and loaded every five minutes; rows older than the retention are deleted daily. The shipped **Stalwart Mail** Insights workbook holds the dashboards: Delivery, Deliverability, Authentication, Spam, SMTP, Security, Ingest, Capacity, Node Health, Tenants, Clusters, and DMARC and TLS, which read the stored DMARC and TLS reports through Insights' Site DB source. |
+| **Telemetry Alert** | One condition the five-minute check found in the telemetry: a Silent Host that reported in the last day but sent nothing for the configured minutes, or an Error Rate of at least the configured number of error events in the last hour. Resolved by the check when the condition clears, or by hand for a node taken out of service; the configured recipients are mailed on both. |
 
 ## Install
 
@@ -117,8 +117,22 @@ contact email; everything else sits at permission level 1, for System Managers.
 Day-to-day buttons: **Drain** takes a node out of DNS before maintenance, **Upgrade Nodes** rolls a
 new Stalwart version out one node at a time, **Sync Config** pushes the generated configuration
 again, **Check Drift** reports what differs from it without changing anything, and **Upgrade Agents**
-installs the current [Suite Cloud Agent](docs/agent.md) build on every active or draining node and every active gateway;
-the cluster, node and gateway forms show which build each agent runs and when it last reported.
+installs each server's telemetry token and the current [Suite Cloud Agent](docs/agent.md) build; the
+cluster, node and gateway forms show when each server last reported.
+
+### Telemetry
+
+Stalwart pushes its own events and metrics to the [telemetry API](docs/api/telemetry.md). Two WebHooks send the events: one lists the events the dashboards read, the other every other event Stalwart logs at error level. OTLP sends the metrics every **Metrics Push Interval (Seconds)**. The cluster plan holds both, and the gateway plan holds its own.
+
+Each node and gateway has its own telemetry token, made with the record. Provisioning and upgrades write it to `/etc/stalwart/stalwart.env` as `SUITE_CLOUD_TELEMETRY_TOKEN`, and each request carries the token of the server that sent it. A config reload that names a variable a running server lacks fails. So the plan switches the push on only once every Provisioned, Active and Draining node of the cluster, or the gateway, has **Telemetry Token Installed**. Until then it writes both WebHooks switched off and OTLP disabled.
+
+OTLP starts only when Stalwart starts. These jobs restart Stalwart:
+
+1. **Upgrade Agents** on a cluster runs a job per Active or Draining node and Active gateway. Each job writes the token to `stalwart.env`, restarts Stalwart when the file changed, and installs the agent that only enforces sending limits. A gateway's agent stops.
+2. When the last server of the cluster, or the gateway, has its token, a job pushes the config and restarts Stalwart on each server once more.
+3. **Upgrade Agents** on a cluster where every server has its token pushes and restarts again. Run it when step 2 failed. Its error shows on the cluster's form.
+
+The servers restart in parallel jobs, not one at a time. **Rotate Telemetry Token** on a node or gateway form makes a new secret and restarts Stalwart on that server. A change of the metrics interval or of **Public URL** takes effect after Upgrade Agents. A Sync Config alone does not restart Stalwart.
 
 ### Adopting a server that already has a directory
 

@@ -8,7 +8,7 @@ This guide sets up a development site for Suite Cloud. Each part builds on the p
 | Mail on a real Stalwart cluster | Also [DNS zones](#3-dns-zones) and [a Stalwart cluster](#4-a-stalwart-cluster) |
 | Hosting Suite sites on Frappe Cloud | Also [a Cloudflare tunnel](#5-a-cloudflare-tunnel) and [Frappe Cloud](#6-frappe-cloud) |
 | The telemetry API and the Insights dashboards | [A bench and a site](#1-a-bench-and-a-site), [tests and lint](#2-tests-and-lint) and [telemetry](#8-telemetry) |
-| The agent on the nodes | Also [the agent](#9-the-agent) and a Go toolchain |
+| The agent on the nodes (sending limits) | Also [the agent](#9-the-agent) and a Go toolchain |
 
 The tests need none of the outside services. They use fakes of Stalwart, Central, Pilot, the hosted site and the DNS providers.
 
@@ -178,20 +178,20 @@ Servers and VPSs cost money until you remove them:
 
 ## 8. Telemetry
 
-The agent on each node pushes logs and metrics to the [telemetry API](api/telemetry.md). Suite Cloud stages each batch as a parquet file under `private/files/telemetry/` and the five-minute job copies the files into the `suite_cloud_telemetry` DuckDB data source in Insights, which `migrate` creates.
+Stalwart on each node and gateway pushes events and metrics to the [telemetry API](api/telemetry.md). Suite Cloud stages each batch as a parquet file under `private/files/telemetry/` and the five-minute job copies the files into the `suite_cloud_telemetry` DuckDB data source in Insights, which `migrate` creates.
 
-1. In **Suite Cloud Settings > Agent & Telemetry**, make sure **Enable Telemetry** is on; it is by default on a new site. Take the **Agent Key** and **Agent Secret** from a Stalwart Cluster that has a node at the `host_ip` below.
-2. Send a batch:
+1. In **Suite Cloud Settings > Agent & Telemetry**, make sure **Enable Telemetry** is on. It is on by default on a new site. Take the **Telemetry Key** and **Telemetry Secret** from a Stalwart Node (`frappe.get_doc("Stalwart Node", name).get_password("telemetry_secret")` in a console).
+2. Send a batch as Stalwart's WebHook does:
 
    ```sh
-   curl -X POST http://suite-cloud.localhost:8000/api/v2/method/suite_cloud.api.telemetry.events \
-     -H "Authorization: Bearer <agent key>:<agent secret>" -H "Content-Type: application/json" \
-     -d '{"source": "stalwart", "host_ip": "203.0.113.5", "hostname": "n1", "records": [{"timestamp": "2026-10-20T09:59:00Z", "level": "info", "event": "delivery.delivered", "data": {"domain": "example.com"}}]}'
+   curl -X POST "http://suite-cloud.localhost:8000/api/v2/method/suite_cloud.api.telemetry.webhook?stream=events" \
+     -H "Authorization: Bearer <telemetry key>:<telemetry secret>" -H "Content-Type: application/json" \
+     -d '{"events": [{"id": "1", "createdAt": "2026-10-20T09:59:00Z", "type": "delivery.delivered", "data": {"domain": "example.com"}}]}'
    ```
 
 3. Load it without waiting for the scheduler: `bench --site suite-cloud.localhost execute suite_cloud.telemetry.warehouse.load_staged_batches`.
-4. To see an alert, set **Telemetry Alert Recipients** and run `bench --site suite-cloud.localhost execute suite_cloud.telemetry.alerts.check_telemetry_alerts` once the node from step 2 has been quiet for the configured minutes: a **Telemetry Alert** opens, and resolves on the next check after another batch.
-5. Open Insights and the **Stalwart Mail** workbook. Its dashboards read the `events` and `metrics` tables live. The `nodes` and `mail_domains` tables beside them are copies of the Stalwart Node, Egress Gateway and Mail Domain records, refreshed by the same job, which the Tenants and Clusters dashboards join on; a gateway is a node of its cluster with the role `gateway`. A delivery is attributed to the tenant by its sender domain, an incoming message by its recipient domain. The DMARC and TLS dashboards read the DMARC Report and TLS Report records live through the `Site DB` data source Insights ships; they need no telemetry. The **Machines** workbook reads the `host.*` metrics of every source, Stalwart and SFU nodes alike.
+4. To see an alert, set **Telemetry Alert Recipients** and run `bench --site suite-cloud.localhost execute suite_cloud.telemetry.alerts.check_telemetry_alerts` once the node from step 1 has been quiet for the configured minutes: a **Telemetry Alert** opens, and resolves on the next check after another batch.
+5. Open Insights and the **Stalwart Mail** workbook. Its dashboards read the `events` and `metrics` tables live. The `nodes` and `mail_domains` tables beside them are copies of the Stalwart Node, Egress Gateway and Mail Domain records, refreshed by the same job, which the Tenants and Clusters dashboards join on; a gateway is a node of its cluster with the role `gateway`. A delivery is attributed to the tenant by its sender domain, an incoming message by its recipient domain. The DMARC and TLS dashboards read the DMARC Report and TLS Report records live through the `Site DB` data source Insights ships; they need no telemetry.
 
 The workbook ships in `suite_cloud/telemetry/insights_workbook/stalwart/stalwart.json`. With developer mode on, every change you save in the Insights UI writes that file again, so edit the dashboards there and commit the file. A new workbook becomes a shipped one with `frappe.get_doc("Insights Workbook", name).mark_as_standard(name="<file name>", module="Telemetry")` in a console. The shipped name never changes: a rename deletes the workbook on every site and creates a new one.
 
@@ -203,7 +203,5 @@ The [Suite Cloud Agent](agent.md) is the Go program in `agent/` that the nodes r
 cd agent
 go test -race ./...
 ```
-
-`STALWART_LOG_DIR=<folder of stalwart.* files> go test ./internal/format/stalwart -run TestRealLogs -v` runs the parser over real log files and reports every line it does not take.
 
 The bench host builds the binaries the nodes get: install Go there the same way, then click **Build Agent** in Suite Cloud Settings, or run `bench --site suite-cloud.localhost execute suite_cloud.telemetry.agent.build.build_agent`. The build lands in `sites/suite-cloud.localhost/private/files/agent/<version>/`. The Python tests of the build use a fake `go` on `PATH`, so they need no toolchain.
