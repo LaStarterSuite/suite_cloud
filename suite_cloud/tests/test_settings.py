@@ -113,12 +113,14 @@ class TestSuiteCloudSettings(IntegrationTestCase):
         from suite_cloud.patches.v1_0 import drop_agent_telemetry_settings as patch
 
         frappe.db.set_single_value(patch.SETTINGS, patch.INTERVAL, 0)
+        frappe.db.delete("Singles", {"doctype": patch.SETTINGS, "field": patch.DISCARD_AFTER})
         frappe.db.sql(
             "INSERT INTO `tabSingles` (doctype, field, value) VALUES (%s, 'agent_max_attempts', '8')",
             patch.SETTINGS,
         )
         patch.execute()
         self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, patch.INTERVAL), 60)
+        self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, patch.DISCARD_AFTER), 10)
         self.assertFalse(
             frappe.db.exists("Singles", {"doctype": patch.SETTINGS, "field": "agent_max_attempts"})
         )
