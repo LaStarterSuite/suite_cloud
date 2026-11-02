@@ -414,8 +414,8 @@
    "label": "Versions"
   },
   {
-   "default": "v0.16.20",
-   "description": "Stalwart release for new clusters, e.g. v0.16.20.",
+   "default": "v0.16.27",
+   "description": "Stalwart release for new clusters, e.g. v0.16.27.",
    "fieldname": "stalwart_version",
    "fieldtype": "Data",
    "label": "Stalwart Version",
