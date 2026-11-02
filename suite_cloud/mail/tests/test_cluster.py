@@ -662,6 +662,31 @@ class TestStalwartCluster(IntegrationTestCase):
         )
         self.assertRaisesRegex(frappe.ValidationError, "must serve clients", bootstrap.provision_node, node)
 
+    def test_upgrades_keep_the_last_ingress_node_in_dns(self) -> None:
+        from suite_cloud.mail.cluster import bootstrap
+
+        cluster = make_cluster()
+        cluster.db_set("status", "Active")
+        nodes = [make_node(cluster, "203.0.113.1"), make_node(cluster, "203.0.113.2")]
+        for node in nodes:
+            node.db_set("status", "Active")
+            dns.sync_node_records(node, include_ingress=True)
+
+        with patch("suite_cloud.mail.cluster.bootstrap.create_server_job"):
+            for node in nodes:
+                bootstrap.upgrade_node(node)
+        ingress = {"dns_zone": ROOT_DOMAIN, "host": "mail.blr", "type": "A"}
+        self.assertEqual(frappe.get_all("DNS Record", ingress, pluck="value"), ["203.0.113.2"])
+        self.assertEqual([node.status for node in nodes], ["Draining", "Active"])
+
+        # The health check reaches Stalwart through the cluster hostname, which still resolves.
+        registry = {"nodeId": 2, "status": "active"}
+        with patch.object(type(cluster), "get_client") as client:
+            client.return_value.cluster_nodes.find_by_hostname.return_value = registry
+            bootstrap.after_upgrade(nodes[1], frappe._dict())
+        self.assertEqual(frappe.db.get_value("Stalwart Node", nodes[1].name, "status"), "Active")
+        self.assertEqual(frappe.get_all("DNS Record", ingress, pluck="value"), ["203.0.113.2"])
+
     def test_metrics_password_is_backfilled_for_existing_clusters(self) -> None:
         from frappe.utils.password import get_decrypted_password
 
