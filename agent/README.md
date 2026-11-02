@@ -6,7 +6,7 @@ Suite Cloud writes `/etc/suite-cloud-agent/config.json`. Unknown keys are refuse
 
 ```json
 {
-  "suite_cloud": {"url": "https://cloud.example.com", "secret": "<agent key>:<agent secret>", "requests_per_minute": 300, "max_attempts": 8},
+  "suite_cloud": {"url": "https://cloud.example.com", "secret": "<agent key>:<agent secret>", "requests_per_minute": 300},
   "node": {"host_ip": "203.0.113.5", "hostname": "n1.c1.example.com"},
   "state_dir": "/var/lib/suite-cloud-agent",
   "quota": {"hook_port": 8095, "hook_token": "<token>", "store": {"type": "memory"}}

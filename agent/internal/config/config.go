@@ -25,7 +25,6 @@ type SuiteCloud struct {
 	URL                   string `json:"url"`
 	Secret                string `json:"secret"`
 	RequestsPerMinute     int    `json:"requests_per_minute"`
-	MaxAttempts           int    `json:"max_attempts"`
 	RequestTimeoutSeconds int    `json:"request_timeout_seconds"`
 }
 
@@ -78,7 +77,6 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) ApplyDefaults() {
 	setInt(&c.SuiteCloud.RequestsPerMinute, 300)
-	setInt(&c.SuiteCloud.MaxAttempts, 8)
 	setInt(&c.SuiteCloud.RequestTimeoutSeconds, 60)
 	if c.Node.Hostname == "" {
 		c.Node.Hostname, _ = os.Hostname()

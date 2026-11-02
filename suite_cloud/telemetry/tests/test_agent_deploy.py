@@ -6,7 +6,8 @@ import frappe
 from suite_cloud.mail.cluster import bootstrap, egress
 from suite_cloud.mail.tests.fixtures import configure_settings, error_log_count, make_cluster, make_node
 from suite_cloud.provisioning.ansible import playbook_task_names
-from suite_cloud.telemetry.agent import build, deploy, status
+from suite_cloud.telemetry import status
+from suite_cloud.telemetry.agent import build, deploy
 from suite_cloud.telemetry.agent.build import AgentBuild
 from suite_cloud.telemetry.tests.test_agent import AgentBuildFixture
 from suite_cloud.utils import clear_config_cache
@@ -56,7 +57,6 @@ class TestAgentDeploy(AgentBuildFixture):
                 "url": "https://cloud.example.test",
                 "secret": self.cluster.agent_token,
                 "requests_per_minute": 300,
-                "max_attempts": 8,
             },
         )
         self.assertRegex(config["suite_cloud"]["secret"], r"^[0-9a-f]{20}:[0-9a-f]{40}$")
@@ -400,23 +400,23 @@ class TestAgentDeploy(AgentBuildFixture):
     def test_the_status_follows_the_last_batch(self) -> None:
         status.forget_contacts()
         self.addCleanup(status.forget_contacts)
-        self.assertEqual(status.agent_status(self.node)["state"], "unknown")
+        self.assertEqual(status.server_status(self.node)["state"], "unknown")
 
         status.record_contact(self.node.ipv4_address)
         status.record_contact(self.gateway.ipv4_address)
-        self.assertEqual(status.agent_status(self.gateway)["state"], "ok")
+        self.assertEqual(status.server_status(self.gateway)["state"], "ok")
 
         stale = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2).isoformat()
         frappe.cache.hset(status.CACHE_KEY, self.node.ipv4_address, {"seen_at": stale})
-        self.assertEqual(status.agent_status(self.node)["state"], "silent")
+        self.assertEqual(status.server_status(self.node)["state"], "silent")
 
         self.node.db_set("status", "Active")
         self.gateway.db_set("status", "Active")
-        summary = status.agent_summary(self.cluster)
+        summary = status.cluster_summary(self.cluster)
         self.assertEqual(summary["state"], "silent")
         self.assertEqual(summary["message"], f"Telemetry: 1 reporting, 1 silent ({self.node.hostname}).")
-        self.assertEqual(status.get_agent_status("Stalwart Node", self.node.name)["state"], "silent")
-        self.assertEqual(status.get_agent_summary(self.cluster.name)["state"], "silent")
+        self.assertEqual(status.get_server_status("Stalwart Node", self.node.name)["state"], "silent")
+        self.assertEqual(status.get_cluster_summary(self.cluster.name)["state"], "silent")
         self.assertRaises(
-            frappe.ValidationError, status.get_agent_status, "Stalwart Cluster", self.cluster.name
+            frappe.ValidationError, status.get_server_status, "Stalwart Cluster", self.cluster.name
         )

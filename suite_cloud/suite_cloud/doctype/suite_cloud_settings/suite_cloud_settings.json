@@ -74,7 +74,6 @@
   "agent_telemetry_tab",
   "agent_section",
   "agent_requests_per_minute",
-  "agent_max_attempts",
   "column_break_agent",
   "agent_built_version",
   "agent_built_at",
@@ -83,7 +82,7 @@
   "enable_telemetry",
   "column_break_telemetry",
   "telemetry_retention_days",
-  "agent_metrics_interval_seconds",
+  "metrics_push_interval_seconds",
   "webhook_discard_after_minutes",
   "telemetry_alerts_section",
   "telemetry_alert_recipients",
@@ -541,17 +540,9 @@
    "reqd": 1
   },
   {
-   "default": "8",
-   "description": "Retries for a sending-limit call after a server or network failure. Rate limits do not count.",
-   "fieldname": "agent_max_attempts",
-   "fieldtype": "Int",
-   "label": "Agent Max Attempts",
-   "reqd": 1
-  },
-  {
    "default": "60",
    "description": "How often Stalwart pushes its metrics. A change applies when Stalwart restarts on each server.",
-   "fieldname": "agent_metrics_interval_seconds",
+   "fieldname": "metrics_push_interval_seconds",
    "fieldtype": "Int",
    "label": "Metrics Push Interval (Seconds)",
    "reqd": 1
@@ -651,7 +642,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 15:30:00.000000",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Cloud Settings",

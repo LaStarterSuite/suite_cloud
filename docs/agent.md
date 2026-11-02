@@ -8,7 +8,7 @@ The agent starts from `/etc/suite-cloud-agent/config.json`. Provisioning writes 
 
 ```json
 {
-  "suite_cloud": {"url": "https://cloud.example.com", "secret": "<agent key>:<agent secret>", "requests_per_minute": 300, "max_attempts": 8},
+  "suite_cloud": {"url": "https://cloud.example.com", "secret": "<agent key>:<agent secret>", "requests_per_minute": 300},
   "node": {"host_ip": "203.0.113.5", "hostname": "n1.c1.example.com"},
   "state_dir": "/var/lib/suite-cloud-agent",
   "quota": {"hook_port": 8095, "hook_token": "<quota hook token>", "store": {"type": "memory"}}
@@ -20,7 +20,6 @@ The agent starts from `/etc/suite-cloud-agent/config.json`. Provisioning writes 
 | `suite_cloud.url` | **Public URL**, else the site's own URL | Where the calls go |
 | `suite_cloud.secret` | **Agent Key** and **Agent Secret** of the cluster | Sent as the bearer token, `<agent key>:<agent secret>` |
 | `suite_cloud.requests_per_minute` | **Agent Requests per Minute** | The agent keeps to the limit the site enforces |
-| `suite_cloud.max_attempts` | **Agent Max Attempts** | Read and checked, but no call uses it now |
 | `suite_cloud.request_timeout_seconds` | 60 | Time allowed for one request |
 | `node.host_ip`, `node.hostname` | The node record | The sending-limit calls name the node by `host_ip` |
 | `state_dir` | `/var/lib/suite-cloud-agent` | Where the agent keeps `quota.json` |

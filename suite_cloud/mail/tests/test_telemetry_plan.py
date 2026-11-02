@@ -33,7 +33,7 @@ class TestTelemetryPlan(IntegrationTestCase):
         webhooks = off["WebHook"]["value"]
         self.assertFalse(any(webhook["enable"] for webhook in webhooks.values()))
         self.assertEqual(off["Metrics"]["value"]["openTelemetry"], {"@type": "Disabled"})
-        self.assertEqual(off["Metrics"]["value"]["prometheus"]["@type"], "Enabled")
+        self.assertEqual(off["Metrics"]["value"]["prometheus"], {"@type": "Disabled"})
 
         self.node.db_set("telemetry_token_installed", 1)
         make_node(self.cluster, ipv4="203.0.113.11")  # pending: not running, so it does not count

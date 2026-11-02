@@ -27,7 +27,7 @@ from suite_cloud.patches.v1_0 import (
     rename_backstop_to_max_daily_send_limit,
 )
 from suite_cloud.telemetry import TELEMETRY_USER
-from suite_cloud.telemetry.agent.status import CACHE_KEY
+from suite_cloud.telemetry.status import CACHE_KEY
 from suite_cloud.tests.fixtures import ROOT_DOMAIN
 
 NODE_IP = "203.0.113.10"
@@ -128,7 +128,7 @@ class TestLimitsApi(SendingLimitsTestCase):
         self.node.db_set("status", "Provisioned")
         self.assertRaises(frappe.PermissionError, self.pull)
 
-    def test_quota_calls_leave_the_agent_status_to_batches(self) -> None:
+    def test_quota_calls_leave_the_telemetry_status_to_pushes(self) -> None:
         frappe.cache.hdel(CACHE_KEY, NODE_IP)  # only this test's node: the site may run real agents
         self.pull()
         self.assertIsNone(frappe.cache.hget(CACHE_KEY, NODE_IP))

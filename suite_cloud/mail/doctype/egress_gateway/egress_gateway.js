@@ -23,7 +23,7 @@ frappe.ui.form.on('Egress Gateway', {
 			frm.add_custom_button(__('Provision'), () => frm.events.call(frm, 'provision', __('Queueing...')), __('Actions'))
 		}
 		if (['Provisioned', 'Active'].includes(frm.doc.status)) {
-			frm.events.show_agent_status(frm)
+			frm.events.show_telemetry_status(frm)
 			frm.add_custom_button(__('Rotate Telemetry Token'), () => frm.events.rotate_telemetry_token(frm), __('Actions'))
 			frm.add_custom_button(
 				__('Re-provision'),
@@ -70,8 +70,8 @@ frappe.ui.form.on('Egress Gateway', {
 		})
 	},
 
-	show_agent_status(frm) {
-		frappe.xcall('suite_cloud.telemetry.agent.status.get_agent_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
+	show_telemetry_status(frm) {
+		frappe.xcall('suite_cloud.telemetry.status.get_server_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
 			const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
 			frm.dashboard.add_comment(frappe.utils.escape_html(status.message), colors[status.state], true)
 		})

@@ -30,8 +30,8 @@ from suite_cloud.api.telemetry.quota import limits
 from suite_cloud.api.tenant import InvalidInputError
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
 from suite_cloud.telemetry import EVENT_LEVELS, EVENTS, METRICS, TELEMETRY_USER, WEBHOOK_EVENTS
-from suite_cloud.telemetry.agent.status import CACHE_KEY, forget_contacts
 from suite_cloud.telemetry.spool import Spool
+from suite_cloud.telemetry.status import CACHE_KEY, forget_contacts
 from suite_cloud.tests.fixtures import configure_settings, production_logging
 
 NODE_IPS = ("203.0.113.5", "198.51.100.77")

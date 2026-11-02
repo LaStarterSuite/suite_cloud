@@ -14,16 +14,14 @@ TELEMETRY_LIMITS = (
     "agent_requests_per_minute",
     "telemetry_silence_minutes",
     "telemetry_errors_per_hour",
-    "agent_max_attempts",
-    "agent_metrics_interval_seconds",
+    "metrics_push_interval_seconds",
     "webhook_discard_after_minutes",
 )
 # What the agent's own config check accepts (agent/internal/config/validate.go), and what Stalwart
 # is given for its pushes; a value outside would install a config the agent refuses to start with.
 AGENT_RANGES = {
     "agent_requests_per_minute": (1, 100000),
-    "agent_max_attempts": (1, 1000),
-    "agent_metrics_interval_seconds": (5, 3600),
+    "metrics_push_interval_seconds": (5, 3600),
     "webhook_discard_after_minutes": (1, 10080),
 }
 

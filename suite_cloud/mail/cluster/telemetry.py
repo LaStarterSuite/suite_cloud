@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe.utils import cint, get_url
 
-from suite_cloud.mail.cluster.plan import TELEMETRY_TOKEN_VARIABLE, as_set, secret_value
+from suite_cloud.mail.cluster.plan import TELEMETRY_TOKEN_VARIABLE, as_set
 from suite_cloud.telemetry import ERROR_EVENTS, WEBHOOK_EVENTS
 from suite_cloud.telemetry.agent.build import is_telemetry_enabled
 from suite_cloud.utils import get_config
@@ -27,7 +27,6 @@ WEBHOOK_TIMEOUT_MS = 30000
 OTLP_TIMEOUT_MS = 10000
 DEFAULT_DISCARD_AFTER_MINUTES = 60
 DEFAULT_PUSH_INTERVAL_SECONDS = 60
-METRICS_USERNAME = "telemetry"  # the old agents' basic-auth user on /metrics/prometheus
 
 
 def fill_token(server: Document) -> None:
@@ -36,6 +35,21 @@ def fill_token(server: Document) -> None:
     server.telemetry_key = server.telemetry_key or frappe.generate_hash(length=20)
     if not server.telemetry_secret:
         server.telemetry_secret = frappe.generate_hash(length=40)
+
+
+def get_reporting_servers(cluster: Document | None = None) -> list[Document]:
+    """The servers that report, in one cluster or in every cluster: Active and Draining nodes and
+    Active gateways."""
+
+    filters = {"cluster": cluster.name} if cluster else {}
+    nodes = frappe.get_all(
+        "Stalwart Node", {**filters, "status": ("in", ("Active", "Draining"))}, pluck="name"
+    )
+    gateways = frappe.get_all("Egress Gateway", {**filters, "status": "Active"}, pluck="name")
+    return [
+        *(frappe.get_doc("Stalwart Node", name) for name in nodes),
+        *(frappe.get_doc("Egress Gateway", name) for name in gateways),
+    ]
 
 
 def get_owner(server: Document) -> Document:
@@ -58,11 +72,8 @@ def is_push_enabled(owner: Document) -> bool:
 
 
 def get_operations(owner: Document) -> list[dict]:
-    """The two WebHooks and the Metrics exporters for a cluster or gateway plan.
-
-    The Prometheus endpoint stays as it was until the push takes over, since the agents still
-    scrape it until then.
-    """
+    """The two WebHooks and the metrics push of a cluster or gateway plan. Nothing reads the
+    Prometheus endpoint, which sits on the public listener, so it stays off."""
 
     enabled = is_push_enabled(owner)
     webhooks = {
@@ -71,7 +82,7 @@ def get_operations(owner: Document) -> list[dict]:
     }
     metrics = {
         "openTelemetry": otlp_exporter() if enabled else {"@type": "Disabled"},
-        "prometheus": {"@type": "Disabled"} if enabled else prometheus_exporter(owner),
+        "prometheus": {"@type": "Disabled"},
     }
     return [
         {"@type": "upsert", "object": "WebHook", "matchOn": ["url"], "value": webhooks},
@@ -102,7 +113,7 @@ def webhook(stream: str, level: str, events: tuple[str, ...], enabled: bool) -> 
 
 
 def otlp_exporter() -> dict:
-    interval = cint(get_config("agent_metrics_interval_seconds")) or DEFAULT_PUSH_INTERVAL_SECONDS
+    interval = cint(get_config("metrics_push_interval_seconds")) or DEFAULT_PUSH_INTERVAL_SECONDS
     return {
         "@type": "Http",
         "endpoint": api_url("otlp"),
@@ -111,19 +122,6 @@ def otlp_exporter() -> dict:
         "httpAuth": bearer_auth(),
         "httpHeaders": {},
     }
-
-
-def prometheus_exporter(owner: Document) -> dict:
-    """Behind a password: it sits on the public HTTPS listener, and without credentials Stalwart
-    serves it to anyone."""
-
-    cluster = owner.get_cluster() if owner.doctype == "Egress Gateway" else owner
-    if not cluster.enable_metrics:
-        return {"@type": "Disabled"}
-    secret = owner.get_password("metrics_password", raise_exception=False)
-    if not secret:
-        raise ValueError("The metrics password is not set")
-    return {"@type": "Enabled", "authUsername": METRICS_USERNAME, "authSecret": secret_value(secret)}
 
 
 def bearer_auth() -> dict:

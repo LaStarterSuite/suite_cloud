@@ -109,24 +109,19 @@ class TestSuiteCloudSettings(IntegrationTestCase):
                 settings.set(field, 0)
                 self.assertRaisesRegex(frappe.ValidationError, "at least 1", settings.save)
 
-    def test_agent_defaults_are_backfilled_and_must_be_positive(self) -> None:
-        from suite_cloud.patches.v1_0 import fill_agent_defaults as patch
+    def test_the_agent_settings_the_push_replaced_go_and_the_interval_is_renamed(self) -> None:
+        from suite_cloud.patches.v1_0 import drop_agent_telemetry_settings as patch
 
-        for field in patch.FIELDS:
-            frappe.db.set_single_value(patch.SETTINGS, field, 0)
+        frappe.db.set_single_value(patch.SETTINGS, patch.INTERVAL, 0)
+        frappe.db.sql(
+            "INSERT INTO `tabSingles` (doctype, field, value) VALUES (%s, 'agent_max_attempts', '8')",
+            patch.SETTINGS,
+        )
         patch.execute()
-        self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, "agent_max_attempts"), 8)
-        self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, "agent_metrics_interval_seconds"), 60)
-
-        frappe.db.set_single_value(patch.SETTINGS, "agent_max_attempts", 3)
-        patch.execute()
-        self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, "agent_max_attempts"), 3)
-
-        for field in patch.FIELDS:
-            with self.subTest(field):
-                settings = frappe.get_single("Suite Cloud Settings")
-                settings.set(field, 0)
-                self.assertRaisesRegex(frappe.ValidationError, "at least 1", settings.save)
+        self.assertEqual(frappe.db.get_single_value(patch.SETTINGS, patch.INTERVAL), 60)
+        self.assertFalse(
+            frappe.db.exists("Singles", {"doctype": patch.SETTINGS, "field": "agent_max_attempts"})
+        )
 
     def test_agent_settings_stay_within_what_the_agent_accepts(self) -> None:
         from suite_cloud.suite_cloud.doctype.suite_cloud_settings.suite_cloud_settings import AGENT_RANGES
@@ -138,7 +133,7 @@ class TestSuiteCloudSettings(IntegrationTestCase):
                     settings.set(field, value)
                     self.assertRaisesRegex(frappe.ValidationError, "between|at least 1", settings.save)
 
-        self.settings.agent_metrics_interval_seconds = 5
+        self.settings.metrics_push_interval_seconds = 5
         self.settings.webhook_discard_after_minutes = 1
         self.settings.save()
         self.assertEqual(get_config("webhook_discard_after_minutes"), 1)

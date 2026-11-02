@@ -21,7 +21,6 @@ func (c *Config) Validate() error {
 		fail("suite_cloud.secret is required")
 	}
 	checkRange(fail, "suite_cloud.requests_per_minute", c.SuiteCloud.RequestsPerMinute, 1, 100000)
-	checkRange(fail, "suite_cloud.max_attempts", c.SuiteCloud.MaxAttempts, 1, 1000)
 	checkRange(fail, "suite_cloud.request_timeout_seconds", c.SuiteCloud.RequestTimeoutSeconds, 5, 600)
 
 	if net.ParseIP(c.Node.HostIP) == nil {
@@ -77,9 +76,9 @@ func validateQuota(fail func(string, ...any), q *Quota) {
 // Summary describes the config for the startup log without its secrets.
 func (c *Config) Summary() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "url=%s secret=%s host_ip=%s hostname=%s requests_per_minute=%d max_attempts=%d",
+	fmt.Fprintf(&b, "url=%s secret=%s host_ip=%s hostname=%s requests_per_minute=%d",
 		c.SuiteCloud.URL, setOrNot(c.SuiteCloud.Secret), c.Node.HostIP, c.Node.Hostname,
-		c.SuiteCloud.RequestsPerMinute, c.SuiteCloud.MaxAttempts)
+		c.SuiteCloud.RequestsPerMinute)
 	if q := c.Quota; q != nil {
 		fmt.Fprintf(&b, " quota_port=%d quota_token=%s quota_store=%s", q.HookPort, setOrNot(q.HookToken), q.Store.Type)
 	}

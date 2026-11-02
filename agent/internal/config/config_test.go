@@ -26,7 +26,7 @@ func TestLoadAppliesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.SuiteCloud.RequestsPerMinute != 300 || cfg.SuiteCloud.MaxAttempts != 8 || cfg.SuiteCloud.RequestTimeoutSeconds != 60 {
+	if cfg.SuiteCloud.RequestsPerMinute != 300 || cfg.SuiteCloud.RequestTimeoutSeconds != 60 {
 		t.Fatalf("limits %+v", cfg.SuiteCloud)
 	}
 	if cfg.StateDir != "/var/lib/suite-cloud-agent" || cfg.LogLevel != "info" || cfg.Quota != nil {
@@ -46,6 +46,7 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"relative state dir":  strings.Replace(example, `"node":`, `"state_dir": "state", "node":`, 1),
 		"bad timeout":         strings.Replace(example, `"secret": "s3cret"`, `"secret": "s3cret", "request_timeout_seconds": 1`, 1),
 		"records per request": strings.Replace(example, `"secret": "s3cret"`, `"secret": "s3cret", "records_per_request": 5000`, 1),
+		"max attempts":        strings.Replace(example, `"secret": "s3cret"`, `"secret": "s3cret", "max_attempts": 8`, 1),
 		"node source":         strings.Replace(example, `"host_ip":`, `"source": "stalwart", "host_ip":`, 1),
 		"logs":                strings.Replace(example, `"node":`, `"logs": [], "node":`, 1),
 		"metrics":             strings.Replace(example, `"node":`, `"metrics": {}, "node":`, 1),

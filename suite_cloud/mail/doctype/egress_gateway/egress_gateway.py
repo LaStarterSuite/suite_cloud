@@ -43,7 +43,6 @@ class EgressGateway(Document):
         ssh_user: DF.Data | None
         ssh_verified: DF.Check
         stalwart_version: DF.Data | None
-        metrics_password: DF.Password | None
         telemetry_key: DF.Data | None
         telemetry_secret: DF.Password | None
         telemetry_token_installed: DF.Check
@@ -62,8 +61,6 @@ class EgressGateway(Document):
         self.admin_username = self.admin_username or "admin"
         if not self.admin_password:
             self.admin_password = frappe.generate_hash(length=32)
-        if not self.metrics_password:
-            self.metrics_password = frappe.generate_hash(length=32)
         telemetry.fill_token(self)
         if not self.data_store:
             self.data_store = self.create_local_store().name

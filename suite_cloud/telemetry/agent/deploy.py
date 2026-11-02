@@ -40,7 +40,6 @@ def agent_config(server: Document) -> dict:
             "url": get_config("public_url") or get_url(),
             "secret": server.get_cluster().agent_token,
             "requests_per_minute": cint(get_config("agent_requests_per_minute")),
-            "max_attempts": cint(get_config("agent_max_attempts")),
         },
         "node": {"host_ip": server.ipv4_address, "hostname": server.hostname},
         "state_dir": STATE_DIR,
@@ -301,17 +300,6 @@ def rotate_telemetry_token(server: Document) -> str | None:
     return agent_job(server, build).name
 
 
-def agent_servers(cluster: Document | None = None) -> list[Document]:
-    """The servers that report, in one cluster or in every cluster: Active and Draining nodes and
-    Active gateways."""
-
-    nodes = frappe.get_all("Stalwart Node", filters_for(cluster, ("Active", "Draining")), pluck="name")
-    return [
-        *(frappe.get_doc("Stalwart Node", name) for name in nodes),
-        *(frappe.get_doc("Egress Gateway", name) for name in active_gateways(cluster)),
-    ]
-
-
 def filters_for(cluster: Document | None, statuses: tuple[str, ...]) -> dict:
     filters = {"status": ("in", statuses)}
     if cluster:
@@ -364,10 +352,10 @@ def start_agent_jobs() -> list[str]:
 
     if not is_telemetry_enabled():
         switch_off_push()
-        return [agent_job(server, None).name for server in agent_servers()]
+        return [agent_job(server, None).name for server in telemetry.get_reporting_servers()]
     build = AgentBuild.last_built()
     if not build or not build.is_built:
-        if agent_servers():
+        if telemetry.get_reporting_servers():
             log_error(
                 "Agent not built",
                 "Telemetry was turned on but no agent build exists; run Build Agent, then Upgrade Agents on every cluster.",

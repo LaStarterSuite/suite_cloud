@@ -24,7 +24,6 @@ from werkzeug.wrappers import Response
 
 from suite_cloud.api.tenant import InvalidInputError, assert_arguments, throttle
 from suite_cloud.telemetry import EVENTS, METRICS, TELEMETRY_USER
-from suite_cloud.telemetry.agent.status import record_contact
 from suite_cloud.telemetry.push import (
     STREAM_EVENTS,
     get_batch_id,
@@ -33,6 +32,7 @@ from suite_cloud.telemetry.push import (
     get_metrics_batch_id,
 )
 from suite_cloud.telemetry.spool import Spool
+from suite_cloud.telemetry.status import record_contact
 from suite_cloud.utils import get_config, log_error
 
 API_PATHS = ("/api/v2/method/suite_cloud.api.telemetry.", "/api/method/suite_cloud.api.telemetry.")

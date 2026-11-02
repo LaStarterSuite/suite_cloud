@@ -30,7 +30,6 @@
   "admin_username",
   "admin_password",
   "column_break_stalwart",
-  "metrics_password",
   "api_key",
   "telemetry_section",
   "telemetry_key",
@@ -216,12 +215,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Generated on save. The agent uses it to read Prometheus metrics.",
-   "fieldname": "metrics_password",
-   "fieldtype": "Password",
-   "label": "Metrics Password"
-  },
-  {
    "description": "Token Suite Cloud uses to push configuration. Created when provisioning finishes.",
    "fieldname": "api_key",
    "fieldtype": "Password",
@@ -323,7 +316,7 @@
    "link_fieldname": "managed_by"
   }
  ],
- "modified": "2026-11-02 12:00:00.000000",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Egress Gateway",

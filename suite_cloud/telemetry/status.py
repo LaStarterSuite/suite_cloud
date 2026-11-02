@@ -8,14 +8,14 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_datetime, now_datetime, pretty_date
 
-from suite_cloud.telemetry.agent.deploy import agent_servers
+from suite_cloud.mail.cluster.telemetry import get_reporting_servers
 from suite_cloud.telemetry.alerts import DEFAULT_SILENCE_MINUTES
 from suite_cloud.utils import get_config
 
 if TYPE_CHECKING:
     from frappe.model.document import Document
 
-CACHE_KEY = "suite_cloud_agent_contact"
+CACHE_KEY = "suite_cloud_telemetry_contact"
 SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")
 STATES = ("silent", "unknown", "ok")  # worst first
 
@@ -31,7 +31,7 @@ def forget_contacts() -> None:
     frappe.cache.delete_value(CACHE_KEY)
 
 
-def agent_status(server: Document) -> dict:
+def server_status(server: Document) -> dict:
     """``state`` is ``ok``, ``silent`` (no batch within the silence window of the alerts) or
     ``unknown`` (no batch recorded); ``message`` says so."""
 
@@ -56,10 +56,10 @@ def agent_status(server: Document) -> dict:
     return status
 
 
-def agent_summary(cluster: Document) -> dict:
+def cluster_summary(cluster: Document) -> dict:
     """One line for the cluster form over the servers that report; ``state`` is the worst."""
 
-    statuses = [agent_status(server) for server in agent_servers(cluster)]
+    statuses = [server_status(server) for server in get_reporting_servers(cluster)]
     if not statuses:
         return {"state": "ok", "message": "", "statuses": []}
 
@@ -78,16 +78,16 @@ def agent_summary(cluster: Document) -> dict:
 
 
 @frappe.whitelist()
-def get_agent_status(doctype: str, name: str) -> dict:
+def get_server_status(doctype: str, name: str) -> dict:
     if doctype not in SERVER_DOCTYPES:
         frappe.throw(_("Not a server doctype: {0}").format(doctype), frappe.ValidationError)
     server = frappe.get_doc(doctype, name)
     server.check_permission("read")
-    return agent_status(server)
+    return server_status(server)
 
 
 @frappe.whitelist()
-def get_agent_summary(cluster: str) -> dict:
+def get_cluster_summary(cluster: str) -> dict:
     doc = frappe.get_doc("Stalwart Cluster", cluster)
     doc.check_permission("read")
-    return agent_summary(doc)
+    return cluster_summary(doc)
