@@ -1,5 +1,5 @@
-"""What provisioning puts on a node for the agent: its config.json, its unit and the Server Jobs
-that install it."""
+"""What provisioning puts on a server for telemetry: the agent's config.json and unit, the
+telemetry token, and the Server Jobs that install them and switch Stalwart's push on."""
 
 from typing import TYPE_CHECKING
 
@@ -7,8 +7,7 @@ import frappe
 from frappe import _
 from frappe.utils import cint, get_url
 
-from suite_cloud.mail.cluster import plan, push, quota
-from suite_cloud.mail.stalwart import verify_tls
+from suite_cloud.mail.cluster import push, quota, telemetry
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
 from suite_cloud.telemetry.agent.build import (
     ARCHITECTURES,
@@ -16,7 +15,7 @@ from suite_cloud.telemetry.agent.build import (
     is_quota_enabled,
     is_telemetry_enabled,
 )
-from suite_cloud.utils import get_config, log_error, mask_secrets, secret_spellings
+from suite_cloud.utils import get_config, log_error, log_exception, mask_secrets, secret_spellings
 
 if TYPE_CHECKING:
     from frappe.model.document import Document
@@ -24,8 +23,7 @@ if TYPE_CHECKING:
 SOURCE = "stalwart"
 CONFIG_PATH = "/etc/suite-cloud-agent/config.json"
 STATE_DIR = "/var/lib/suite-cloud-agent"
-PROMETHEUS_URL = "https://127.0.0.1:443/metrics/prometheus"
-PLAYBOOK = "install-agent.yml"
+PLAYBOOK = "install-telemetry.yml"
 ROLL_OUT_KEY = "suite_cloud:agent_roll_out"  # the settings change the last roll-out applied
 ROLL_OUT_TIMEOUT = 600  # seconds a roll-out may hold, or wait for, the roll-out lock
 NODE_BUILDER = "suite_cloud.mail.cluster.bootstrap.build_node_variables"
@@ -33,39 +31,20 @@ GATEWAY_BUILDER = "suite_cloud.mail.cluster.egress.build_gateway_variables"
 
 
 def agent_config(server: Document) -> dict:
-    """``config.json`` for a Stalwart Node or Egress Gateway. The Go side reads exactly this shape
-    (``agent/internal/config``), so the two change together."""
+    """``config.json`` for a Stalwart Node. The Go side reads exactly this shape
+    (``agent/internal/config``), so the two change together. Stalwart pushes its own events and
+    metrics, so the agent only enforces the sending limits."""
 
     config = {
         "suite_cloud": {
             "url": get_config("public_url") or get_url(),
             "secret": server.get_cluster().agent_token,
             "requests_per_minute": cint(get_config("agent_requests_per_minute")),
-            "records_per_request": cint(get_config("agent_records_per_request")),
             "max_attempts": cint(get_config("agent_max_attempts")),
         },
-        "node": {"source": SOURCE, "host_ip": server.ipv4_address, "hostname": server.hostname},
+        "node": {"host_ip": server.ipv4_address, "hostname": server.hostname},
         "state_dir": STATE_DIR,
-        "logs": [
-            {
-                "name": SOURCE,
-                "path": f"{plan.LOG_DIRECTORY}/stalwart.*",
-                "format": SOURCE,
-                "ship_existing": bool(cint(get_config("agent_ship_existing_logs"))),
-                "delete_after_days": cint(get_config("agent_log_delete_after_days")),
-            }
-        ],
-        "metrics": {"interval_seconds": cint(get_config("agent_metrics_interval_seconds")), "mounts": ["/"]},
     }
-    if scrapes_metrics(server):
-        owner = server if server.doctype == "Egress Gateway" else server.get_cluster()
-        config["metrics"]["stalwart"] = {
-            "url": PROMETHEUS_URL,
-            "username": plan.METRICS_USERNAME,
-            "password": owner.get_password("metrics_password"),
-            "tls_server_name": server.hostname,
-            "verify_tls": verify_tls(),
-        }
     if is_quota_hook_server(server):
         config["quota"] = quota_config(server.get_cluster())
     return config
@@ -90,18 +69,8 @@ def quota_config(cluster: Document) -> dict:
     }
 
 
-def scrapes_metrics(server: Document) -> bool:
-    """The cluster's switch turns the exporter on. A gateway keeps every listener on; an
-    outbound-only node runs none, so there is nothing to scrape."""
-
-    if not server.get_cluster().enable_metrics:
-        return False
-    return server.doctype == "Egress Gateway" or (server.role or "full") != "outbound"
-
-
 def systemd_unit() -> str:
-    """Runs as the stalwart user: the log directory is its, and deleting shipped files needs write
-    on it. The sandbox keeps Stalwart's own config and data out of reach all the same."""
+    """Runs as the stalwart user, sandboxed away from Stalwart's own config and data."""
 
     return f"""[Unit]
 Description=Suite Cloud Agent
@@ -123,7 +92,6 @@ NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths={plan.LOG_DIRECTORY}
 InaccessiblePaths=/etc/stalwart /var/lib/stalwart
 MemoryMax=256M
 
@@ -132,21 +100,29 @@ WantedBy=multi-user.target
 """
 
 
-def agent_variables(server: Document, restart: bool = False) -> dict:
-    """What install-agent.yml needs, merged into the node and gateway variables so the two never
-    differ. With telemetry off or without a build the play stops the agent instead. With
-    ``restart`` the play restarts the agent even when nothing on the node changed."""
+def agent_variables(server: Document, context: dict) -> dict:
+    """What install-telemetry.yml and install-agent.yml need, merged into the node and gateway
+    variables so the two never differ.
 
+    The context's ``restart_stalwart`` restarts Stalwart even when its environment did not change,
+    which starts OTLP, and ``agent_restart`` the agent. With telemetry off, without a build
+    and on a gateway, which has no sending limits, the play stops the agent instead.
+    """
+
+    switches = {
+        "agent_restart": bool(context.get("agent_restart")),
+        "restart_stalwart": bool(context.get("restart_stalwart")),
+    }
     disabled = {
+        **switches,
         "agent_enabled": False,
         "agent_version": "",
         "agent_binaries": {},
         "agent_config_json": "",
         "agent_systemd_unit": "",
-        "agent_restart": restart,
         "__secret_values__": [],
     }
-    if not is_telemetry_enabled():
+    if not is_telemetry_enabled() or server.doctype == "Egress Gateway":
         return disabled
     build = AgentBuild.last_built()
     if not build or not build.is_built:
@@ -158,12 +134,12 @@ def agent_variables(server: Document, restart: bool = False) -> dict:
 
     config = agent_config(server)
     return {
+        **switches,
         "agent_enabled": True,
         "agent_version": build.version,
         "agent_binaries": {arch: str(build.binary_path(arch)) for arch in ARCHITECTURES},
         "agent_config_json": frappe.as_json(config),
         "agent_systemd_unit": systemd_unit(),
-        "agent_restart": restart,
         "__secret_values__": agent_secrets(config),
     }
 
@@ -172,8 +148,6 @@ def agent_secrets(config: dict) -> list[str]:
     """Every secret in an agent's config.json, so job output and previews can mask them."""
 
     secrets = [config["suite_cloud"]["secret"]]
-    if "stalwart" in config["metrics"]:
-        secrets.append(config["metrics"]["stalwart"]["password"])
     if "quota" in config:
         secrets += [config["quota"]["hook_token"], *quota.store_secrets(config["quota"]["store"])]
     return [secret for secret in secrets if secret]
@@ -199,48 +173,142 @@ def mask_config(value, spellings: list[str]):
 
 
 def install_agent(server: Document) -> Document:
-    """A Server Job that installs the agent only: no drain, no Stalwart restart. The binary, the
-    config and the unit are rewritten where they differ and the agent restarts in any case."""
+    """A Server Job that installs the server's telemetry token and its agent. Stalwart restarts
+    only when its environment changed."""
 
+    return agent_job(server, require_build())
+
+
+def require_build() -> AgentBuild:
     if not is_telemetry_enabled():
         frappe.throw(_("Turn on Enable Telemetry in Suite Cloud Settings first."))
     build = AgentBuild.last_built()
     if not build or not build.is_built:
         frappe.throw(_("No agent build on this bench host; run Build Agent in Suite Cloud Settings first."))
-    return agent_job(server, build)
+    return build
 
 
-def agent_job(server: Document, build: AgentBuild | None) -> Document:
+def agent_job(
+    server: Document,
+    build: AgentBuild | None,
+    restart_stalwart: bool = False,
+) -> Document:
     """Without a build the job runs the play with the secret gone, which stops the agent."""
 
     is_gateway = server.doctype == "Egress Gateway"
-    title = (
-        f"Install agent {build.version} on {server.hostname}" if build else f"Stop agent on {server.hostname}"
-    )
+    if restart_stalwart:
+        title = f"Start telemetry push on {server.hostname}"
+    elif build and not is_gateway:
+        title = f"Install agent {build.version} on {server.hostname}"
+    else:
+        title = f"Stop agent on {server.hostname}"
+    context = {
+        "gateway" if is_gateway else "node": server.name,
+        "agent_restart": True,
+        "restart_stalwart": restart_stalwart,
+    }
     return create_server_job(
         server,
         PLAYBOOK,
         title=title,
-        context={"gateway" if is_gateway else "node": server.name, "agent_restart": True},
+        context=context,
         variables_builder=GATEWAY_BUILDER if is_gateway else NODE_BUILDER,
+        callback="after_install_agent",
     )
 
 
 def upgrade_agents(cluster: Document) -> list[str]:
-    """Rolls the built agent out to every server of the cluster that runs an agent."""
+    """Rolls the built agent and the telemetry tokens out to every server of the cluster: its
+    nodes, then each of its gateways."""
 
-    return [install_agent(server).name for server in agent_servers(cluster)]
+    build = require_build()
+    owners = [cluster, *(frappe.get_doc("Egress Gateway", name) for name in active_gateways(cluster))]
+    return [name for owner in owners for name in roll_out(owner, build)]
+
+
+def roll_out(owner: Document, build: AgentBuild | None) -> list[str]:
+    """Where every server of a cluster or gateway has its token, the push is switched on.
+    Elsewhere each server gets its token and the agent that only enforces sending limits."""
+
+    if owner.status == "Active" and telemetry.is_push_enabled(owner):
+        return start_push(owner, build)
+    return [agent_job(server, build).name for server in owner_servers(owner)]
+
+
+def start_push(owner: Document, build: AgentBuild | None) -> list[str]:
+    """Pushes the plan, which now holds the WebHooks and OTLP, then restarts Stalwart on each
+    server to start OTLP, with the agent that no longer ships logs."""
+
+    if owner.status != "Active":
+        return []  # its first push and start include the push already
+    owner.push_config()
+    return [agent_job(server, build, restart_stalwart=True).name for server in owner_servers(owner)]
+
+
+def owner_servers(owner: Document) -> list[Document]:
+    """The servers running a cluster's or gateway's plan that a job can reach."""
+
+    if owner.doctype == "Egress Gateway":
+        return [owner] if owner.status == "Active" else []
+    nodes = frappe.get_all("Stalwart Node", filters_for(owner, ("Active", "Draining")), pluck="name")
+    return [frappe.get_doc("Stalwart Node", name) for name in nodes]
+
+
+def active_gateways(cluster: Document | None = None) -> list[str]:
+    return frappe.get_all("Egress Gateway", filters_for(cluster, ("Active",)), pluck="name")
+
+
+def mark_token_installed(server: Document) -> None:
+    """A job wrote the token to the server's stalwart.env. When it was the last server of its
+    cluster or gateway without one, the push is switched on, in a job of its own so a failed
+    push never fails the job that installed the token."""
+
+    owner = telemetry.get_owner(server)
+    was_enabled = telemetry.is_push_enabled(owner)
+    server.db_set("telemetry_token_installed", 1, update_modified=False)
+    if was_enabled or not telemetry.is_push_enabled(owner):
+        return
+    if frappe.flags.do_not_enqueue:
+        start_push_job(owner.doctype, owner.name)
+    else:
+        frappe.enqueue(
+            start_push_job, doctype=owner.doctype, name=owner.name, queue="long", enqueue_after_commit=True
+        )
+
+
+def start_push_job(doctype: str, name: str) -> None:
+    """A failure shows on the cluster's form; Upgrade Agents tries again."""
+
+    owner = frappe.get_doc(doctype, name)
+    build = AgentBuild.last_built() if is_telemetry_enabled() else None
+    if doctype == "Stalwart Cluster":
+        with push.recorded_failure(name):
+            start_push(owner, build)
+    else:
+        start_push(owner, build)
+
+
+def rotate_telemetry_token(server: Document) -> str | None:
+    """A new secret, written to the server's stalwart.env by a job that restarts Stalwart. Until
+    then Stalwart sends the old one, is refused and retries."""
+
+    server.reload()  # the form sends its unsaved edits too; only the secret is saved
+    server.telemetry_secret = frappe.generate_hash(length=40)
+    server.save(ignore_permissions=True)
+    if server.status not in ("Active", "Draining"):
+        return None  # provisioning writes the new token
+    build = AgentBuild.last_built() if is_telemetry_enabled() else None
+    return agent_job(server, build).name
 
 
 def agent_servers(cluster: Document | None = None) -> list[Document]:
-    """The servers that run an agent, in one cluster or in every cluster: Active and Draining
-    nodes (a draining node still ships its log) and Active gateways."""
+    """The servers that report, in one cluster or in every cluster: Active and Draining nodes and
+    Active gateways."""
 
     nodes = frappe.get_all("Stalwart Node", filters_for(cluster, ("Active", "Draining")), pluck="name")
-    gateways = frappe.get_all("Egress Gateway", filters_for(cluster, ("Active",)), pluck="name")
     return [
         *(frappe.get_doc("Stalwart Node", name) for name in nodes),
-        *(frappe.get_doc("Egress Gateway", name) for name in gateways),
+        *(frappe.get_doc("Egress Gateway", name) for name in active_gateways(cluster)),
     ]
 
 
@@ -251,12 +319,17 @@ def filters_for(cluster: Document | None, statuses: tuple[str, ...]) -> dict:
     return filters
 
 
-def switch_off_quota_hooks() -> None:
-    """With telemetry off the Agents stop, so each active cluster's config is pushed again: its
-    plan then holds the hook switched off, and Stalwart stops calling Agents that are gone."""
+def switch_off_push() -> None:
+    """With telemetry off each active cluster's and gateway's config is pushed again: its plan
+    then holds the WebHooks and OTLP and the quota hook switched off."""
 
     for name in frappe.get_all("Stalwart Cluster", {"status": "Active"}, pluck="name"):
         push.resync_cluster_after_commit(name)
+    for name in active_gateways():
+        try:
+            frappe.get_doc("Egress Gateway", name).push_config()
+        except Exception:
+            log_exception(f"Telemetry not switched off on {name}")
 
 
 def enqueue_roll_out_agents() -> None:
@@ -285,22 +358,32 @@ def roll_out_agents() -> list[str]:
 
 
 def start_agent_jobs() -> list[str]:
-    """Every server that runs an agent gets it installed, or stopped while telemetry is off. A
-    missing build is an Error Log, not an exception: the setting is already saved."""
+    """Every cluster and gateway gets the push and its agents, or stops both while telemetry is
+    off. A missing build or a failed push is an Error Log, not an exception: the setting is
+    already saved."""
 
-    enabled = is_telemetry_enabled()
-    if not enabled:
-        switch_off_quota_hooks()
-    servers = agent_servers()
-    if not servers:
-        return []
-    build = None
-    if enabled:
-        build = AgentBuild.last_built()
-        if not build or not build.is_built:
+    if not is_telemetry_enabled():
+        switch_off_push()
+        return [agent_job(server, None).name for server in agent_servers()]
+    build = AgentBuild.last_built()
+    if not build or not build.is_built:
+        if agent_servers():
             log_error(
                 "Agent not built",
                 "Telemetry was turned on but no agent build exists; run Build Agent, then Upgrade Agents on every cluster.",
             )
-            return []
-    return [agent_job(server, build).name for server in servers]
+        return []
+    names = []
+    owners = [
+        *(
+            frappe.get_doc("Stalwart Cluster", name)
+            for name in frappe.get_all("Stalwart Cluster", pluck="name")
+        ),
+        *(frappe.get_doc("Egress Gateway", name) for name in active_gateways()),
+    ]
+    for owner in owners:
+        try:
+            names += roll_out(owner, build)
+        except Exception:
+            log_exception(f"Telemetry not rolled out to {owner.name}")
+    return names

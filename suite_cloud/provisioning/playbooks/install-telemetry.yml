@@ -1,0 +1,51 @@
+---
+- name: Install the telemetry token
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    # SUITE_CLOUD_TELEMETRY_TOKEN is read on start, by the WebHooks and the OTLP push.
+    - name: Write the runtime environment
+      no_log: true
+      copy:
+        content: "{{ env_normal }}"
+        dest: /etc/stalwart/stalwart.env
+        owner: stalwart
+        group: stalwart
+        mode: "0600"
+      register: stalwart_env_file
+
+    # OTLP starts only on a start, never on a reload.
+    - name: Restart Stalwart
+      when: restart_stalwart | bool or stalwart_env_file.changed
+      systemd:
+        name: stalwart
+        state: restarted
+      register: stalwart_restart
+
+    - name: Wait for the listeners
+      when: stalwart_restart is changed
+      wait_for:
+        host: 127.0.0.1
+        port: "{{ item }}"
+        timeout: 180
+      loop: "{{ wait_ports }}"
+
+    - name: Give a node without listeners time to finish starting
+      when: stalwart_restart is changed and wait_ports | length == 0
+      wait_for:
+        timeout: 10
+
+    # A WebHook or OTLP push that names a missing variable is skipped with a build error.
+    - name: Check the start for configuration errors
+      when: stalwart_restart is changed
+      shell: |
+        since=$(date -u -d "$(systemctl show -p ActiveEnterTimestamp --value stalwart)" +%Y-%m-%dT%H:%M:%SZ)
+        errors=$(grep -hE 'registry\.(validation-error|build-error)' /var/log/stalwart/stalwart* \
+          | awk -v since="$since" '$1 >= since')
+        [ -z "$errors" ] && exit 0
+        echo "$errors" | tail -n 20
+        exit 1
+      changed_when: false
+
+- import_playbook: install-agent.yml

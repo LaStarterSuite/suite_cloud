@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest import skipUnless
 from unittest.mock import patch
-from uuid import uuid7
+from uuid import NAMESPACE_URL, uuid5, uuid7
 
 import frappe
 from duckdb import IOException
@@ -240,6 +240,27 @@ class TestWarehouse(IntegrationTestCase):
         self.warehouse.prune_expired()
 
         self.assertEqual((self.count(EVENTS), self.count(METRICS)), (1, 0))
+
+    def test_the_agents_rows_go_staged_or_loaded_and_stalwarts_stay(self) -> None:
+        from suite_cloud.patches.v1_0 import delete_agent_telemetry as cleanup
+
+        pushed = str(uuid5(NAMESPACE_URL, "n1:batch"))
+        self.stage(EVENTS, [event()])
+        self.stage(METRICS, [metric(name="host.cpu.percent")])
+        self.stage(EVENTS, [event(), event()], pushed)
+        self.warehouse.load_pending()
+        staged = self.stage(EVENTS, [event()])  # an agent batch not loaded yet
+        kept = self.stage(METRICS, [metric()], str(uuid5(NAMESPACE_URL, "n1:otlp")))
+
+        with (
+            patch.object(cleanup, "DATA_SOURCE", self.name),
+            patch.object(cleanup, "Warehouse", return_value=self.warehouse),
+            patch.object(cleanup, "Spool", return_value=self.spool),
+        ):
+            cleanup.execute()
+
+        self.assertEqual((self.count(EVENTS), self.count(METRICS)), (2, 0))
+        self.assertEqual((staged.exists(), kept.exists()), (False, True))
 
     def test_node_and_domain_records_are_copied_beside_the_telemetry(self) -> None:
         cluster = make_cluster()

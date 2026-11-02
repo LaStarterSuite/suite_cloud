@@ -12,20 +12,19 @@ from suite_cloud.utils import clear_config_cache, validate_version
 CENTRAL_CONNECTION_FIELDS = ("central_url", "central_team", "central_api_key", "central_api_secret")
 TELEMETRY_LIMITS = (
     "agent_requests_per_minute",
-    "agent_records_per_request",
     "telemetry_silence_minutes",
-    "telemetry_error_rate_percent",
+    "telemetry_errors_per_hour",
     "agent_max_attempts",
     "agent_metrics_interval_seconds",
+    "webhook_discard_after_minutes",
 )
-# What the agent's own config check accepts (agent/internal/config/validate.go); a value outside
-# would install a config the agent refuses to start with.
+# What the agent's own config check accepts (agent/internal/config/validate.go), and what Stalwart
+# is given for its pushes; a value outside would install a config the agent refuses to start with.
 AGENT_RANGES = {
     "agent_requests_per_minute": (1, 100000),
-    "agent_records_per_request": (1, 100000),
     "agent_max_attempts": (1, 1000),
     "agent_metrics_interval_seconds": (5, 3600),
-    "agent_log_delete_after_days": (0, 100000),
+    "webhook_discard_after_minutes": (1, 10080),
 }
 
 
@@ -78,7 +77,7 @@ class SuiteCloudSettings(Document):
         suite_app_ref: DF.Data
         suite_app_repo: DF.Data
         telemetry_alert_recipients: DF.SmallText | None
-        telemetry_error_rate_percent: DF.Int
+        telemetry_errors_per_hour: DF.Int
         telemetry_retention_days: DF.Int
         telemetry_silence_minutes: DF.Int
         tenant_email_accounts: DF.Table[TenantEmailAccount]

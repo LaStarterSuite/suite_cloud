@@ -16,6 +16,7 @@ dependencies = [
     "ansible~=12.3",
     "cryptography>=42",  # ed25519 SSH keypairs for clusters
     "PyYAML>=6",  # reading playbooks to pre-create task rows
+    "opentelemetry-proto~=1.45",  # decoding Stalwart's OTLP metrics push
 ]
 
 [build-system]

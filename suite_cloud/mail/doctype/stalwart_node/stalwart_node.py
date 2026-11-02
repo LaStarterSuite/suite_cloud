@@ -9,7 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 
 from suite_cloud.dns.resolver import verify_ptr_record
-from suite_cloud.mail.cluster import bootstrap, dns, naming
+from suite_cloud.mail.cluster import bootstrap, dns, naming, telemetry
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
 from suite_cloud.utils import log_exception
@@ -43,6 +43,9 @@ class StalwartNode(Document):
         ssh_port: DF.Int
         ssh_user: DF.Data | None
         ssh_verified: DF.Check
+        telemetry_key: DF.Data | None
+        telemetry_secret: DF.Password | None
+        telemetry_token_installed: DF.Check
         title: DF.Data | None
         status: DF.Literal[
             "Pending", "Provisioning", "Provisioned", "Active", "Draining", "Failed", "Disabled"
@@ -54,6 +57,9 @@ class StalwartNode(Document):
     def autoname(self) -> None:
         self.hostname = naming.next_hostname("Stalwart Node", self.cluster, naming.NODE_PREFIX)
         self.name = self.hostname
+
+    def before_insert(self) -> None:
+        telemetry.fill_token(self)
 
     def validate(self) -> None:
         validate_ssh_user_field(self)
@@ -221,6 +227,15 @@ class StalwartNode(Document):
         return {"config": masked_agent_config(self), "telemetry_enabled": is_telemetry_enabled()}
 
     @frappe.whitelist()
+    def rotate_telemetry_token(self) -> str | None:
+        """A new telemetry secret; a job writes it to stalwart.env and restarts Stalwart."""
+
+        frappe.only_for("System Manager")
+        from suite_cloud.telemetry.agent.deploy import rotate_telemetry_token
+
+        return rotate_telemetry_token(self)
+
+    @frappe.whitelist()
     def drain(self) -> None:
         frappe.only_for("System Manager")
         bootstrap.drain_node(self)
@@ -261,6 +276,11 @@ class StalwartNode(Document):
 
     def after_upgrade_failed(self, job: Document) -> None:
         self.set_status("Failed", job.error_log)
+
+    def after_install_agent(self, job: Document) -> None:
+        from suite_cloud.telemetry.agent.deploy import mark_token_installed
+
+        mark_token_installed(self)
 
 
 def on_doctype_update() -> None:

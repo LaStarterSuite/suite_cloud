@@ -2357,7 +2357,6 @@
     "number_column_options": [
      {},
      {},
-     {},
      {}
     ],
     "number_columns": [
@@ -2369,15 +2368,6 @@
       },
       "id": "Errors",
       "measure_name": "Errors"
-     },
-     {
-      "data_type": "Integer",
-      "expression": {
-       "expression": "count_if(level == 'warn')",
-       "type": "expression"
-      },
-      "id": "Warnings",
-      "measure_name": "Warnings"
      },
      {
       "data_type": "Integer",
@@ -2521,77 +2511,6 @@
    "query": "stalwart-events",
    "sort_order": 46,
    "title": "Ingest Readings",
-   "workbook": "stalwart"
-  },
-  "stalwart-lifecycle-events": {
-   "chart_type": "Row",
-   "config": {
-    "filters": {
-     "filters": [
-      {
-       "column": {
-        "column_name": "category",
-        "type": "column"
-       },
-       "operator": "in",
-       "value": [
-        "config",
-        "acme",
-        "housekeeper",
-        "server"
-       ]
-      },
-      {
-       "column": {
-        "column_name": "event",
-        "type": "column"
-       },
-       "operator": "is_set",
-       "value": null
-      }
-     ],
-     "logical_operator": "And"
-    },
-    "limit": 10,
-    "order_by": [
-     {
-      "column": {
-       "column_name": "Events",
-       "type": "column"
-      },
-      "direction": "desc"
-     }
-    ],
-    "x_axis": {
-     "dimension": {
-      "column_name": "event",
-      "data_type": "String",
-      "dimension_name": "event"
-     }
-    },
-    "y_axis": {
-     "series": [
-      {
-       "measure": {
-        "data_type": "Integer",
-        "expression": {
-         "expression": "count()",
-         "type": "expression"
-        },
-        "measure_name": "Events"
-       }
-      }
-     ],
-     "show_data_labels": true
-    }
-   },
-   "description": null,
-   "folder": null,
-   "info": "Configuration, certificate, housekeeper and server events by name.",
-   "name": "stalwart-lifecycle-events",
-   "query": "stalwart-events",
-   "sort_order": 60,
-   "title": "Lifecycle Events",
    "workbook": "stalwart"
   },
   "stalwart-mail-by-listener": {
@@ -2998,64 +2917,6 @@
    "query": "stalwart-events",
    "sort_order": 11,
    "title": "Outcomes",
-   "workbook": "stalwart"
-  },
-  "stalwart-outgoing-reports": {
-   "chart_type": "Line",
-   "config": {
-    "filters": {
-     "filters": [],
-     "logical_operator": "And"
-    },
-    "limit": 100,
-    "order_by": [
-     {
-      "column": {
-       "column_name": "timestamp",
-       "type": "column"
-      },
-      "direction": "asc"
-     }
-    ],
-    "split_by": {
-     "dimension": {
-      "column_name": "host",
-      "data_type": "String",
-      "dimension_name": "host"
-     },
-     "max_split_values": 10
-    },
-    "x_axis": {
-     "dimension": {
-      "column_name": "timestamp",
-      "data_type": "Datetime",
-      "dimension_name": "timestamp",
-      "granularity": "day"
-     }
-    },
-    "y_axis": {
-     "series": [
-      {
-       "measure": {
-        "data_type": "Integer",
-        "expression": {
-         "expression": "count_if(category == 'outgoing-report')",
-         "type": "expression"
-        },
-        "measure_name": "Reports"
-       }
-      }
-     ],
-     "show_data_labels": false
-    }
-   },
-   "description": null,
-   "folder": null,
-   "info": "outgoing-report.* events: the DMARC and TLS aggregate reports this cluster sent.",
-   "name": "stalwart-outgoing-reports",
-   "query": "stalwart-events",
-   "sort_order": 22,
-   "title": "Outgoing Reports",
    "workbook": "stalwart"
   },
   "stalwart-policy-coverage": {
@@ -5428,67 +5289,6 @@
    "sort_order": 51,
    "title": "Users and Domains",
    "workbook": "stalwart"
-  },
-  "stalwart-warnings-and-errors": {
-   "chart_type": "Bar",
-   "config": {
-    "filters": {
-     "filters": [],
-     "logical_operator": "And"
-    },
-    "limit": 100,
-    "order_by": [
-     {
-      "column": {
-       "column_name": "timestamp",
-       "type": "column"
-      },
-      "direction": "asc"
-     }
-    ],
-    "x_axis": {
-     "dimension": {
-      "column_name": "timestamp",
-      "data_type": "Datetime",
-      "dimension_name": "timestamp",
-      "granularity": "day"
-     }
-    },
-    "y_axis": {
-     "series": [
-      {
-       "measure": {
-        "data_type": "Integer",
-        "expression": {
-         "expression": "count_if(level == 'warn')",
-         "type": "expression"
-        },
-        "measure_name": "Warnings"
-       }
-      },
-      {
-       "measure": {
-        "data_type": "Integer",
-        "expression": {
-         "expression": "count_if(level == 'error')",
-         "type": "expression"
-        },
-        "measure_name": "Errors"
-       }
-      }
-     ],
-     "show_data_labels": false,
-     "stack": true
-    }
-   },
-   "description": null,
-   "folder": null,
-   "info": null,
-   "name": "stalwart-warnings-and-errors",
-   "query": "stalwart-events",
-   "sort_order": 56,
-   "title": "Warnings and Errors",
-   "workbook": "stalwart"
   }
  },
  "creation": "2026-10-21 12:17:24.468223",
@@ -5967,7 +5767,6 @@
       "stalwart-bounces": "`stalwart-events`.`timestamp`",
       "stalwart-deliverability-readings": "`stalwart-events`.`timestamp`",
       "stalwart-destinations": "`stalwart-events`.`timestamp`",
-      "stalwart-outgoing-reports": "`stalwart-events`.`timestamp`",
       "stalwart-policy-failures": "`stalwart-events`.`timestamp`",
       "stalwart-retries": "`stalwart-events`.`timestamp`"
      },
@@ -5990,7 +5789,6 @@
       "stalwart-bounces": "`stalwart-events`.`host`",
       "stalwart-deliverability-readings": "`stalwart-events`.`host`",
       "stalwart-destinations": "`stalwart-events`.`host`",
-      "stalwart-outgoing-reports": "`stalwart-events`.`host`",
       "stalwart-policy-failures": "`stalwart-events`.`host`",
       "stalwart-retries": "`stalwart-events`.`host`"
      },
@@ -6093,19 +5891,8 @@
      "layout": {
       "h": 20,
       "i": "latency_by_destination",
-      "w": 10,
+      "w": 20,
       "x": 0,
-      "y": 46
-     },
-     "type": "chart"
-    },
-    {
-     "chart": "stalwart-outgoing-reports",
-     "layout": {
-      "h": 20,
-      "i": "outgoing_reports",
-      "w": 10,
-      "x": 10,
       "y": 46
      },
      "type": "chart"
@@ -6611,11 +6398,9 @@
       "stalwart-error-events": "`stalwart-events`.`timestamp`",
       "stalwart-health-readings": "`stalwart-events`.`timestamp`",
       "stalwart-hosts": "`stalwart-events`.`timestamp`",
-      "stalwart-lifecycle-events": "`stalwart-events`.`timestamp`",
       "stalwart-process-memory-mib": "`stalwart-metrics`.`timestamp`",
       "stalwart-startups": "`stalwart-events`.`timestamp`",
-      "stalwart-store-errors": "`stalwart-events`.`timestamp`",
-      "stalwart-warnings-and-errors": "`stalwart-events`.`timestamp`"
+      "stalwart-store-errors": "`stalwart-events`.`timestamp`"
      },
      "type": "filter"
     },
@@ -6635,11 +6420,9 @@
       "stalwart-error-events": "`stalwart-events`.`host`",
       "stalwart-health-readings": "`stalwart-events`.`host`",
       "stalwart-hosts": "`stalwart-events`.`host`",
-      "stalwart-lifecycle-events": "`stalwart-events`.`host`",
       "stalwart-process-memory-mib": "`stalwart-metrics`.`host`",
       "stalwart-startups": "`stalwart-events`.`host`",
-      "stalwart-store-errors": "`stalwart-events`.`host`",
-      "stalwart-warnings-and-errors": "`stalwart-events`.`host`"
+      "stalwart-store-errors": "`stalwart-events`.`host`"
      },
      "type": "filter"
     },
@@ -6648,7 +6431,7 @@
      "layout": {
       "h": 4,
       "i": "health_readings-0",
-      "w": 5,
+      "w": 7,
       "x": 0,
       "y": 2
      },
@@ -6659,21 +6442,9 @@
      "chart": "stalwart-health-readings",
      "layout": {
       "h": 4,
-      "i": "health_readings-1",
-      "w": 5,
-      "x": 5,
-      "y": 2
-     },
-     "reading": "Warnings",
-     "type": "chart"
-    },
-    {
-     "chart": "stalwart-health-readings",
-     "layout": {
-      "h": 4,
       "i": "health_readings-2",
-      "w": 5,
-      "x": 10,
+      "w": 7,
+      "x": 7,
       "y": 2
      },
      "reading": "Startups",
@@ -6684,8 +6455,8 @@
      "layout": {
       "h": 4,
       "i": "health_readings-3",
-      "w": 5,
-      "x": 15,
+      "w": 6,
+      "x": 14,
       "y": 2
      },
      "reading": "Startup Errors",
@@ -6703,24 +6474,13 @@
      "type": "chart"
     },
     {
-     "chart": "stalwart-warnings-and-errors",
-     "layout": {
-      "h": 20,
-      "i": "warnings_and_errors",
-      "w": 10,
-      "x": 10,
-      "y": 6
-     },
-     "type": "chart"
-    },
-    {
      "chart": "stalwart-error-events",
      "layout": {
       "h": 20,
       "i": "error_events",
       "w": 10,
-      "x": 0,
-      "y": 26
+      "x": 10,
+      "y": 6
      },
      "type": "chart"
     },
@@ -6730,7 +6490,7 @@
       "h": 20,
       "i": "store_errors",
       "w": 10,
-      "x": 10,
+      "x": 0,
       "y": 26
      },
      "type": "chart"
@@ -6741,19 +6501,8 @@
       "h": 20,
       "i": "startups",
       "w": 10,
-      "x": 0,
-      "y": 46
-     },
-     "type": "chart"
-    },
-    {
-     "chart": "stalwart-lifecycle-events",
-     "layout": {
-      "h": 20,
-      "i": "lifecycle",
-      "w": 10,
       "x": 10,
-      "y": 46
+      "y": 26
      },
      "type": "chart"
     },
@@ -6762,9 +6511,9 @@
      "layout": {
       "h": 20,
       "i": "hosts",
-      "w": 10,
+      "w": 20,
       "x": 0,
-      "y": 66
+      "y": 46
      },
      "type": "chart"
     }

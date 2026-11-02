@@ -74,11 +74,7 @@
   "agent_telemetry_tab",
   "agent_section",
   "agent_requests_per_minute",
-  "agent_records_per_request",
   "agent_max_attempts",
-  "agent_metrics_interval_seconds",
-  "agent_ship_existing_logs",
-  "agent_log_delete_after_days",
   "column_break_agent",
   "agent_built_version",
   "agent_built_at",
@@ -87,11 +83,13 @@
   "enable_telemetry",
   "column_break_telemetry",
   "telemetry_retention_days",
+  "agent_metrics_interval_seconds",
+  "webhook_discard_after_minutes",
   "telemetry_alerts_section",
   "telemetry_alert_recipients",
   "column_break_telemetry_alerts",
   "telemetry_silence_minutes",
-  "telemetry_error_rate_percent"
+  "telemetry_errors_per_hour"
  ],
  "fields": [
   {
@@ -154,10 +152,10 @@
    "label": "Allow Sub-addressed Emails at Signup"
   },
   {
+   "description": "Connected sites send mail such as invites and password resets through Suite Cloud.",
    "fieldname": "email_section",
    "fieldtype": "Section Break",
-   "label": "Tenant Email",
-   "description": "Connected sites send mail such as invites and password resets through Suite Cloud."
+   "label": "Tenant Email"
   },
   {
    "description": "Outgoing Email Account for each tenant type. Sites of a type with no account cannot send mail.",
@@ -178,10 +176,10 @@
    "label": "Use Tenant Title as Sender Name"
   },
   {
+   "collapsible": 1,
    "fieldname": "retention_section",
    "fieldtype": "Section Break",
-   "label": "Retention",
-   "collapsible": 1
+   "label": "Retention"
   },
   {
    "default": "90",
@@ -306,11 +304,11 @@
    "label": "Create Servers Automatically"
   },
   {
+   "collapsible": 1,
    "description": "Sites per server = (memory - reserved) / memory per site, or the same for disk, whichever is lower.",
    "fieldname": "sizing_section",
    "fieldtype": "Section Break",
-   "label": "Server Sizing",
-   "collapsible": 1
+   "label": "Server Sizing"
   },
   {
    "default": "1024",
@@ -527,32 +525,24 @@
    "label": "Agent & Telemetry"
   },
   {
-   "description": "The agent runs on each Stalwart node and egress gateway. It sends logs and metrics to Suite Cloud.",
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:doc.enable_telemetry || doc.agent_build_error",
+   "description": "The agent runs on each Stalwart node. It enforces the sending limits of Mail Accounts.",
    "fieldname": "agent_section",
    "fieldtype": "Section Break",
-   "label": "Agent",
-   "collapsible": 1,
-   "collapsible_depends_on": "eval:doc.enable_telemetry || doc.agent_build_error"
+   "label": "Agent"
   },
   {
    "default": "300",
-   "description": "Per agent.",
+   "description": "Per server: Stalwart's webhook and metrics pushes and the agent's sending-limit calls together.",
    "fieldname": "agent_requests_per_minute",
    "fieldtype": "Int",
    "label": "Agent Requests per Minute",
    "reqd": 1
   },
   {
-   "default": "5000",
-   "description": "Log events, metric samples or usage records in one request.",
-   "fieldname": "agent_records_per_request",
-   "fieldtype": "Int",
-   "label": "Agent Records per Request",
-   "reqd": 1
-  },
-  {
    "default": "8",
-   "description": "Retries for a batch after a server or network failure. Rate limits do not count.",
+   "description": "Retries for a sending-limit call after a server or network failure. Rate limits do not count.",
    "fieldname": "agent_max_attempts",
    "fieldtype": "Int",
    "label": "Agent Max Attempts",
@@ -560,25 +550,19 @@
   },
   {
    "default": "60",
-   "description": "How often the agent collects metrics.",
+   "description": "How often Stalwart pushes its metrics. A change applies when Stalwart restarts on each server.",
    "fieldname": "agent_metrics_interval_seconds",
    "fieldtype": "Int",
-   "label": "Metrics Interval (Seconds)",
+   "label": "Metrics Push Interval (Seconds)",
    "reqd": 1
   },
   {
-   "default": "0",
-   "description": "Send old log files the first time the agent starts. Off sends only new lines.",
-   "fieldname": "agent_ship_existing_logs",
-   "fieldtype": "Check",
-   "label": "Ship Existing Logs"
-  },
-  {
-   "default": "0",
-   "description": "Days to keep a sent log file. 0 keeps it. The node deletes logs after 14 days in any case.",
-   "fieldname": "agent_log_delete_after_days",
+   "default": "60",
+   "description": "Stalwart drops events it could not deliver for this long. Covers a Suite Cloud deploy.",
+   "fieldname": "webhook_discard_after_minutes",
    "fieldtype": "Int",
-   "label": "Delete Shipped Logs After (Days)"
+   "label": "Webhook Discard After (Minutes)",
+   "reqd": 1
   },
   {
    "fieldname": "column_break_agent",
@@ -605,14 +589,14 @@
    "read_only": 1
   },
   {
-   "description": "Agents send logs and metrics to the telemetry API. A loader copies them into Insights.",
+   "description": "Stalwart pushes its events and metrics to the telemetry API. A loader copies them into Insights.",
    "fieldname": "telemetry_section",
    "fieldtype": "Section Break",
    "label": "Telemetry"
   },
   {
    "default": "1",
-   "description": "Run the agent on each Stalwart node and egress gateway. Changing it queues an Install Agent job on each server.",
+   "description": "Stalwart pushes events and metrics, and the agent runs on each Stalwart node. Changing it queues a job on each server.",
    "fieldname": "enable_telemetry",
    "fieldtype": "Check",
    "label": "Enable Telemetry"
@@ -630,12 +614,12 @@
    "reqd": 1
   },
   {
-   "description": "Checked every five minutes. An alert opens for a node that stops reporting or logs too many errors.",
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:doc.enable_telemetry",
+   "description": "Checked every five minutes. An alert opens for a server that stops reporting or logs too many errors.",
    "fieldname": "telemetry_alerts_section",
    "fieldtype": "Section Break",
-   "label": "Telemetry Alerts",
-   "collapsible": 1,
-   "collapsible_depends_on": "eval:doc.enable_telemetry"
+   "label": "Telemetry Alerts"
   },
   {
    "description": "Emails to notify, separated by commas or lines. Blank records alerts without email.",
@@ -656,18 +640,18 @@
    "reqd": 1
   },
   {
-   "default": "5",
-   "description": "A node with more errors than this share of its events in the last hour gets an alert. Needs at least 100 events.",
-   "fieldname": "telemetry_error_rate_percent",
+   "default": "100",
+   "description": "A server that logs this many error events in an hour gets an alert.",
+   "fieldname": "telemetry_errors_per_hour",
    "fieldtype": "Int",
-   "label": "Error Rate Alert (%)",
+   "label": "Errors per Hour Alert",
    "reqd": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-28 18:22:33.441427",
+ "modified": "2026-11-02 15:30:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Cloud Settings",

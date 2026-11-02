@@ -1,5 +1,6 @@
 """The staging directory: whole files only, oldest first, bad ones moved aside."""
 
+import os
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -67,11 +68,11 @@ class TestSpool(IntegrationTestCase):
 
     def test_pending_files_come_oldest_first_up_to_the_limit(self) -> None:
         names = [str(uuid7()) for _ in range(3)]
-        for name in reversed(names):
-            self.write(name)
+        for age, name in enumerate(reversed(names)):  # a WebHook batch id does not sort by arrival
+            os.utime(self.write(name), (1_000_000 + age, 1_000_000 + age))
 
         pending = self.spool.get_pending(EVENTS, 2)
-        self.assertEqual([p.stem for p in pending], names[:2])
+        self.assertEqual([p.stem for p in pending], list(reversed(names))[:2])
         self.assertEqual(self.spool.get_pending(METRICS, 2), [])
 
     def test_a_rejected_file_is_moved_aside_and_logged(self) -> None:

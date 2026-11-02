@@ -27,9 +27,8 @@ from suite_cloud.utils import get_config, log_exception
 SILENT_HOST = "Silent Host"
 ERROR_RATE = "Error Rate"
 LOOKBACK = timedelta(hours=24)  # a node that reported this recently is expected to keep reporting
-MINIMUM_EVENTS = 100  # an hour with fewer events has no rate worth an alert
 DEFAULT_SILENCE_MINUTES = 30  # the settings' defaults, used until the site has them
-DEFAULT_ERROR_RATE_PERCENT = 5
+DEFAULT_ERRORS_PER_HOUR = 100
 
 
 def check_telemetry_alerts() -> None:
@@ -62,8 +61,8 @@ class Alerts:
         return timedelta(minutes=cint(get_config("telemetry_silence_minutes")) or DEFAULT_SILENCE_MINUTES)
 
     @property
-    def error_rate_percent(self) -> int:
-        return cint(get_config("telemetry_error_rate_percent")) or DEFAULT_ERROR_RATE_PERCENT
+    def errors_per_hour(self) -> int:
+        return cint(get_config("telemetry_errors_per_hour")) or DEFAULT_ERRORS_PER_HOUR
 
     @property
     def recipients(self) -> list[str]:
@@ -156,25 +155,18 @@ class Alerts:
         )
 
     def find_error_rates(self) -> list[Finding]:
-        """Nodes whose error-level share of the last hour's events is at or over the threshold."""
+        """Nodes that logged at least the threshold of error events in the last hour. Stalwart
+        pushes only the events Suite Cloud lists, so a share of all events means nothing."""
 
         since = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1)
         rows = self.warehouse.query(
-            "SELECT host_ip, arg_max(hostname, \"timestamp\"), count(*), count_if(level = 'error') "
-            'FROM "events" WHERE "timestamp" >= $since GROUP BY host_ip '
-            "HAVING count(*) >= $minimum AND count_if(level = 'error') * 100 >= count(*) * $percent",
-            {"since": since, "minimum": MINIMUM_EVENTS, "percent": self.error_rate_percent},
+            'SELECT host_ip, arg_max(hostname, "timestamp"), count(*) FROM "events" '
+            "WHERE \"timestamp\" >= $since AND level = 'error' GROUP BY host_ip HAVING count(*) >= $limit",
+            {"since": since, "limit": self.errors_per_hour},
         )
         return [
-            Finding(
-                ERROR_RATE,
-                host_ip,
-                hostname,
-                _("{0} of {1} events in the last hour are errors ({2}%).").format(
-                    errors, total, round(100 * errors / total, 1)
-                ),
-            )
-            for host_ip, hostname, total, errors in rows
+            Finding(ERROR_RATE, host_ip, hostname, _("{0} error events in the last hour.").format(errors))
+            for host_ip, hostname, errors in rows
         ]
 
     def open(self, finding: Finding) -> None:

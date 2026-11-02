@@ -42,6 +42,14 @@ frappe.ui.form.on('Stalwart Node', {
 		if (['Provisioned', 'Active', 'Draining'].includes(frm.doc.status)) {
 			frm.add_custom_button(__('Install Agent'), () => frm.events.call(frm, 'install_agent', __('Queueing the agent install...')), __('Actions'))
 			frm.add_custom_button(__('Show Agent Config'), () => frm.events.show_agent_config(frm), __('Actions'))
+			frm.add_custom_button(
+				__('Rotate Telemetry Token'),
+				() =>
+					frappe.confirm(__('Replace the telemetry secret of {0}? A job writes it to the node and restarts Stalwart.', [frm.doc.hostname]), () =>
+						frm.events.call(frm, 'rotate_telemetry_token', __('Queueing...')),
+					),
+				__('Actions'),
+			)
 		}
 		if (frm.doc.status === 'Draining') {
 			frm.add_custom_button(__('Restore'), () => frm.events.call(frm, 'restore', __('Adding to ingress DNS...')), __('Actions'))
@@ -60,7 +68,7 @@ frappe.ui.form.on('Stalwart Node', {
 
 	show_agent_status(frm) {
 		frappe.xcall('suite_cloud.telemetry.agent.status.get_agent_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
-			const colors = { ok: 'green', outdated: 'orange', silent: 'red', unknown: 'blue' }
+			const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
 			frm.dashboard.add_comment(frappe.utils.escape_html(status.message), colors[status.state], true)
 		})
 	},

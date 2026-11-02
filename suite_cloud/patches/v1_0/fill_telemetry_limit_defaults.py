@@ -3,12 +3,10 @@ import frappe
 # A Single's field defaults only fill a site whose settings were never saved, so sites set up
 # before the limit fields existed have them empty, which the now required fields refuse.
 SETTINGS = "Suite Cloud Settings"
-# The first two were telemetry_*; rename_telemetry_limits_to_agent runs before this patch.
+# The first was telemetry_*; rename_telemetry_limits_to_agent runs before this patch.
 FIELDS = (
     "agent_requests_per_minute",
-    "agent_records_per_request",
     "telemetry_silence_minutes",
-    "telemetry_error_rate_percent",
 )
 
 

@@ -704,11 +704,14 @@ class TestStalwartCluster(IntegrationTestCase):
         self.assertEqual(operations["Tracer"]["matchOn"], ["@type"])
         self.assertEqual(operations["Tracer"]["value"]["log"]["rotate"], "daily")
         self.assertEqual(operations["Tracer"]["value"]["journal"]["level"], "warn")
-        # The exporter the agent scrapes, behind the cluster's own generated password.
+        # Until a running node lacks its telemetry token, the agents still scrape the exporter,
+        # behind the cluster's own generated password.
+        make_node(cluster, ipv4="203.0.113.21").db_set("status", "Active")
+        scraped = {op["object"]: op for op in plan.cluster_plan(cluster)}
         metrics_password = cluster.get_password("metrics_password")
         self.assertEqual(len(metrics_password), 32)
         self.assertEqual(
-            operations["Metrics"]["value"]["prometheus"],
+            scraped["Metrics"]["value"]["prometheus"],
             {
                 "@type": "Enabled",
                 "authUsername": "telemetry",
@@ -719,7 +722,7 @@ class TestStalwartCluster(IntegrationTestCase):
         self.assertNotIn(metrics_password, plan.redacted(plan.cluster_plan(cluster)))
         cluster.enable_metrics = 0
         off = {op["object"]: op for op in plan.cluster_plan(cluster)}
-        self.assertEqual(off["Metrics"]["value"], {"prometheus": {"@type": "Disabled"}})
+        self.assertEqual(off["Metrics"]["value"]["prometheus"], {"@type": "Disabled"})
         cluster.enable_metrics = 1
         self.assertEqual(operations["Coordinator"]["value"], {"@type": "Default"})
         self.assertEqual(set(operations["ClusterRole"]["value"]), {"full", "frontend", "outbound"})
@@ -806,12 +809,15 @@ class TestStalwartCluster(IntegrationTestCase):
                 "STALWART_HOSTNAME": node.hostname,
                 "STALWART_PUBLIC_URL": cluster.base_url,
                 "STALWART_ROLE": "frontend",
+                "SUITE_CLOUD_TELEMETRY_TOKEN": f"{node.telemetry_key}:{node.get_password('telemetry_secret')}",
             },
         )
         recovery = plan.node_env(node, "recovery")
         self.assertEqual(recovery["STALWART_RECOVERY_MODE"], "1")
         self.assertTrue(recovery["STALWART_RECOVERY_ADMIN"].startswith("admin:"))
         self.assertNotIn("STALWART_RECOVERY_MODE", plan.node_env(node, "bootstrap"))
+        for mode in ("bootstrap", "recovery"):
+            self.assertNotIn("SUITE_CLOUD_TELEMETRY_TOKEN", plan.node_env(node, mode))
         self.assertEqual(json.loads(frappe.as_json(plan.node_config(cluster)))["@type"], "PostgreSql")
         self.assertIn("EnvironmentFile=/etc/stalwart/stalwart.env", plan.systemd_unit())
 

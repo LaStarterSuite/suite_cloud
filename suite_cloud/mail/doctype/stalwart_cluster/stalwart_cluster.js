@@ -63,7 +63,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 		if (frm.doc.status === 'Active') {
 			frappe.xcall('suite_cloud.telemetry.agent.status.get_agent_summary', { cluster: frm.doc.name }).then((summary) => {
 				if (!summary.message) return
-				const colors = { ok: 'green', outdated: 'orange', silent: 'red', unknown: 'blue' }
+				const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
 				frm.dashboard.add_comment(frappe.utils.escape_html(summary.message), colors[summary.state], true)
 			})
 		}
@@ -158,7 +158,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 	},
 
 	upgrade_agents(frm) {
-		frappe.confirm(__('Install the current Suite Cloud Agent build on every active or draining node and every active gateway? Stalwart keeps running.'), () => {
+		frappe.confirm(__('Install the telemetry token and the current Suite Cloud Agent build on every active or draining node and every active gateway? Stalwart restarts on a server whose token changed, and on every server once all of them have it, to start the metrics push.'), () => {
 			frm.events.call(frm, 'upgrade_agents', {}, __('Queueing agent installs...'))
 		})
 	},

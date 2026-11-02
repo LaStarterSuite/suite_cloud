@@ -138,10 +138,10 @@ class TestSuiteCloudSettings(IntegrationTestCase):
                     settings.set(field, value)
                     self.assertRaisesRegex(frappe.ValidationError, "between|at least 1", settings.save)
 
-        self.settings.agent_log_delete_after_days = 0
         self.settings.agent_metrics_interval_seconds = 5
+        self.settings.webhook_discard_after_minutes = 1
         self.settings.save()
-        self.assertEqual(get_config("agent_log_delete_after_days"), 0)
+        self.assertEqual(get_config("webhook_discard_after_minutes"), 1)
 
     def test_the_telemetry_user_is_created_without_roles(self) -> None:
         from suite_cloud.install import TELEMETRY_USER, ensure_user

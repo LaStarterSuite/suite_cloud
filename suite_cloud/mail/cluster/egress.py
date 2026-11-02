@@ -400,11 +400,7 @@ def gateway_plan(gateway: Document) -> list[dict]:
         )
     operations.extend(gateway_defaults_plan())
     operations.append(plan.tracer_operation())
-    operations.append(
-        plan.metrics_operation(
-            gateway.get_password("metrics_password"), bool(gateway.get_cluster().enable_metrics)
-        )
-    )
+    operations.extend(plan.telemetry_operations(gateway))
     operations.append(
         {
             "@type": "update",
@@ -434,7 +430,7 @@ def gateway_defaults_plan() -> list[dict]:
         "description": "Outbound relay only",
         "tasks": {
             "@type": "EnableSome",
-            "taskTypes": plan.as_set(["outboundMta", "taskQueueProcessing", "taskScheduler"]),
+            "taskTypes": plan.as_set(["outboundMta", "taskQueueProcessing", "taskScheduler", "metricsPush"]),
         },
         # Every listener stays on so management HTTPS keeps working; the firewall only opens 443
         # and the relay ports.
@@ -469,6 +465,7 @@ def gateway_env(gateway: Document, mode: str = "normal") -> dict[str, str]:
     env = {"STALWART_HOSTNAME": gateway.hostname, "STALWART_PUBLIC_URL": gateway.base_url}
     if mode == "normal":
         env["STALWART_ROLE"] = GATEWAY_ROLE
+        env[plan.TELEMETRY_TOKEN_VARIABLE] = plan.get_telemetry_token(gateway)
         return env
     env["STALWART_RECOVERY_ADMIN"] = f"{gateway.admin_username}:{gateway.get_password('admin_password')}"
     env["STALWART_RECOVERY_MODE_PORT"] = str(plan.BOOTSTRAP_PORT)
@@ -543,17 +540,21 @@ def build_gateway_variables(context: dict) -> dict:
         "__secret_keys__": list(SECRET_VARIABLES),
         "__secret_values__": [
             gateway.get_password("admin_password"),
+            plan.get_telemetry_token(gateway),
             *plan.secret_strings(bootstrap_plan),
             *plan.secret_strings(recovery_plan),
         ],
     }
-    agent = agent_variables(gateway, restart=bool(context.get("agent_restart")))
+    agent = agent_variables(gateway, context)
     variables["__secret_values__"] += agent.pop("__secret_values__")
     variables.update(agent)
     return variables
 
 
 def after_gateway_provision(gateway: Document, job: Document) -> None:
+    from suite_cloud.telemetry.agent.deploy import mark_token_installed
+
+    mark_token_installed(gateway)  # while the gateway is not running yet, so the push follows no change
     gateway.db_set(
         {"status": "Provisioned", "provisioned_at": now(), "installed_version": gateway.stalwart_version},
         update_modified=False,

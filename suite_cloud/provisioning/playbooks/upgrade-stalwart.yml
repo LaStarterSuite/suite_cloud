@@ -6,6 +6,15 @@
   become: true
   gather_facts: false
   tasks:
+    - name: Write the runtime environment
+      no_log: true
+      copy:
+        content: "{{ env_normal }}"
+        dest: /etc/stalwart/stalwart.env
+        owner: stalwart
+        group: stalwart
+        mode: "0600"
+
     - name: Restart Stalwart
       systemd:
         name: stalwart

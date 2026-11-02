@@ -260,9 +260,21 @@ class TestStalwartClient(UnitTestCase):
         self.assertEqual(self.fake.singletons["SpamSettings"], rules)
 
     def test_metrics_exporter_is_updated_as_a_singleton(self) -> None:
-        from suite_cloud.mail.cluster.plan import _drifted, metrics_operation
+        import frappe
 
-        operation = metrics_operation("pw")
+        from suite_cloud.mail.cluster.plan import _drifted
+        from suite_cloud.mail.cluster.telemetry import prometheus_exporter
+
+        def cluster(password: str, enabled: bool = True):
+            return frappe._dict(
+                doctype="Stalwart Cluster", enable_metrics=enabled, get_password=lambda *a, **k: password
+            )
+
+        operation = {
+            "@type": "update",
+            "object": "Metrics",
+            "value": {"prometheus": prometheus_exporter(cluster("pw"))},
+        }
         first = self.client.apply([operation])
         self.assertEqual(first.updated, ["Metrics/singleton"])
         prometheus = self.fake.singletons["Metrics"]["prometheus"]
@@ -275,8 +287,8 @@ class TestStalwartClient(UnitTestCase):
         self.assertEqual(
             _drifted("Metrics", off, operation["value"]), [{"object": "Metrics", "property": "prometheus"}]
         )
-        self.assertRaises(ValueError, metrics_operation, "")
-        self.assertEqual(metrics_operation("", enabled=False)["value"], {"prometheus": {"@type": "Disabled"}})
+        self.assertRaises(ValueError, prometheus_exporter, cluster(""))
+        self.assertEqual(prometheus_exporter(cluster("", enabled=False)), {"@type": "Disabled"})
 
     def test_plan_apply_resends_secrets_without_counting_them_as_changes(self) -> None:
         plan = [

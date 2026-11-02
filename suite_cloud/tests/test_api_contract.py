@@ -66,13 +66,13 @@ class TestApiVerbs(UnitTestCase):
                 self.assertTrue(getattr(function, "is_tenant_api", False))
 
     def test_every_agent_endpoint_checks_the_agent_first(self) -> None:
-        # The secret signs the telemetry user in; only the telemetry_api wrapper refuses anyone else.
+        # A token signs the telemetry user in; only the telemetry_api and push_api wrappers refuse anyone else.
         names = set()
         for path, name, function in api_functions(AGENT_MODULES):
             names.add(name)
             with self.subTest(path):
                 self.assertTrue(getattr(function, "is_telemetry_api", False))
-        self.assertEqual(names, {"events", "metrics", "limits", "usage"})
+        self.assertEqual(names, {"webhook", "otlp", "limits", "usage"})
 
 
 class TestApiInput(UnitTestCase):

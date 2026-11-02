@@ -41,9 +41,11 @@ class Spool:
         return path
 
     def get_pending(self, table: TelemetryTable, limit: int) -> list[Path]:
-        """The oldest staged files first: batch ids are UUIDv7, so names sort by arrival."""
+        """The oldest staged files first. A WebHook batch id is derived from its events, so names
+        do not sort by arrival; the write time does."""
 
-        return sorted(self.get_directory(table).glob("*.parquet"))[:limit]
+        staged = self.get_directory(table).glob("*.parquet")
+        return sorted(staged, key=lambda path: path.stat().st_mtime)[:limit]
 
     def reject(self, path: Path, reason: str) -> None:
         """Moves a file the loader cannot read out of the way, so one bad batch blocks nothing."""

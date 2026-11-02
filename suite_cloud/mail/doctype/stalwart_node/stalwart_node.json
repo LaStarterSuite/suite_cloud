@@ -28,6 +28,11 @@
   "column_break_ssh",
   "ssh_verified",
   "ssh_host_keys",
+  "telemetry_section",
+  "telemetry_key",
+  "telemetry_secret",
+  "column_break_telemetry",
+  "telemetry_token_installed",
   "state_section",
   "node_id",
   "provisioned_at",
@@ -197,6 +202,41 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
+   "fieldname": "telemetry_section",
+   "fieldtype": "Section Break",
+   "label": "Telemetry"
+  },
+  {
+   "description": "Generated on save. Stalwart sends it with its secret, as SUITE_CLOUD_TELEMETRY_TOKEN, on every webhook and metrics push.",
+   "fieldname": "telemetry_key",
+   "fieldtype": "Data",
+   "label": "Telemetry Key",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "telemetry_secret",
+   "fieldtype": "Password",
+   "label": "Telemetry Secret",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_telemetry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Set once a job wrote the token to stalwart.env and restarted Stalwart.",
+   "fieldname": "telemetry_token_installed",
+   "fieldtype": "Check",
+   "label": "Telemetry Token Installed",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "state_section",
    "fieldtype": "Section Break",
    "label": "State"
@@ -240,7 +280,7 @@
    "link_fieldname": "managed_by"
   }
  ],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-02 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Node",
