@@ -86,7 +86,7 @@ def _holds_the_only_data_store(cluster: Document, node: Document) -> bool:
 def upgrade_node(node: Document) -> Document:
     if not node.enabled:
         frappe.throw(_("Enable the node first."))
-    if node.status == "Active":
+    if node.status == "Active" and not is_last_ingress_node(node):
         drain_node(node)
     return create_server_job(
         node,
@@ -369,6 +369,14 @@ def drain_node(node: Document) -> None:
     dns.sync_node_records(node, include_ingress=False)
     node.set_status("Draining" if node.status == "Active" else "Disabled")
     dns.sync_spf_record(node.get_cluster())
+
+
+def is_last_ingress_node(node: Document) -> bool:
+    """Draining it takes the cluster hostname out of DNS, and the health check goes through it."""
+
+    return bool(node.in_ingress_dns) and not frappe.db.exists(
+        "Stalwart Node", {"cluster": node.cluster, "in_ingress_dns": 1, "name": ["!=", node.name]}
+    )
 
 
 def restore_node(node: Document) -> None:
