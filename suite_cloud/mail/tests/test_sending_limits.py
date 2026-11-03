@@ -687,9 +687,8 @@ class TestQuotaPlan(SendingLimitsTestCase):
         hooks = self.fake.all("MtaHook")
         self.assertEqual([hook["httpHeaders"] for hook in hooks], [{"X-Suite-Cloud-Hook": "sending-limits"}])
 
-    def test_the_patch_moves_every_active_cluster(self) -> None:
+    def test_the_patch_keeps_queued_jobs_callbacks_and_moves_no_cluster(self) -> None:
         node = make_node(self.cluster)
-        node.db_set("status", "Active")
         with patch(EXECUTE):
             retried = install.telemetry_job(node)
         retried.db_set("callback", "after_install_agent")  # a job queued before the deploy
@@ -698,23 +697,7 @@ class TestQuotaPlan(SendingLimitsTestCase):
         self.assertEqual(
             frappe.db.get_value("Server Job", retried.name, "callback"), "after_install_telemetry"
         )
-        enqueue.assert_any_call(
-            move_sending_limits_to_suite_cloud.move_cluster,
-            cluster=self.cluster.name,
-            queue="long",
-            enqueue_after_commit=True,
-        )
-
-        cluster_push = (
-            "suite_cloud.mail.doctype.stalwart_cluster.stalwart_cluster.StalwartCluster.push_config"
-        )
-        with patch(EXECUTE), patch(cluster_push) as pushed:
-            names = move_sending_limits_to_suite_cloud.move_cluster(self.cluster.name)
-        pushed.assert_called_once()
-        self.assertEqual(
-            {frappe.db.get_value("Server Job", name, "title") for name in names},
-            {f"Install telemetry token on {node.hostname}"},
-        )
+        enqueue.assert_not_called()  # each cluster is moved by hand
 
     def test_the_patch_turns_the_backstop_on_without_a_config_push(self) -> None:
         self.cluster.db_set("max_daily_send_limit", 0)

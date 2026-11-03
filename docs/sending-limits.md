@@ -86,4 +86,9 @@ Each recipient is one request to Suite Cloud. The check itself takes about 1 ms 
 
 ## Moving from the agent
 
-The patch `move_sending_limits_to_suite_cloud` renames the Server Job callback `after_install_agent` to `after_install_telemetry` and queues one job per Active cluster. The job pushes the plan, which swaps the agent's hook for this one, then runs a telemetry install job on each Active or Draining node and Active gateway. The first tasks of `install-telemetry.yml` stop and delete the agent. A failed push shows on the cluster's form; **Sync Config** and **Install Telemetry Tokens** run the steps again. Until a cluster's job runs, Stalwart calls the old agent, which enforces its last pulled limits. After the job, Suite Cloud seeds each counter from the agent's last push, so at most 60 seconds of counts are lost.
+The patch `move_sending_limits_to_suite_cloud` only renames the Server Job callback `after_install_agent` to `after_install_telemetry`, so a job queued before the deploy finds its callback. Each cluster is moved by hand:
+
+1. **Sync Config** on the cluster pushes the plan. It removes the agent's loopback hook, adds the RCPT hook and turns the backstop on.
+2. On each node, stop and delete the agent: `systemctl disable --now suite-cloud-agent`, delete `/etc/systemd/system/suite-cloud-agent.service`, `/usr/local/bin/suite-cloud-agent`, `/etc/suite-cloud-agent` and `/var/lib/suite-cloud-agent`, then `systemctl daemon-reload`. **Install Telemetry Token** on a node runs the same tasks, as the first tasks of `install-telemetry.yml`.
+
+Until step 1, Stalwart calls the old agent, which enforces its last pulled limits. After it, Suite Cloud seeds each counter from the agent's last push, so at most 60 seconds of counts are lost.
