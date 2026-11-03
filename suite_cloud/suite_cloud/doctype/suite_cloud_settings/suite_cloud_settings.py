@@ -17,9 +17,8 @@ TELEMETRY_LIMITS = (
     "metrics_push_interval_seconds",
     "webhook_discard_after_minutes",
 )
-# What the agent's own config check accepts (agent/internal/config/validate.go), and what Stalwart
-# is given for its pushes; a value outside would install a config the agent refuses to start with.
-AGENT_RANGES = {
+# What Stalwart is given for its pushes, and how many of them a server may make.
+TELEMETRY_RANGES = {
     "agent_requests_per_minute": (1, 100000),
     "metrics_push_interval_seconds": (5, 3600),
     "webhook_discard_after_minutes": (1, 10080),
@@ -108,9 +107,9 @@ class SuiteCloudSettings(Document):
 
             enqueue_recheck_of_vouched_domains()
         if before and cint(before.enable_telemetry) != cint(self.enable_telemetry):
-            from suite_cloud.telemetry.agent.deploy import enqueue_roll_out_agents
+            from suite_cloud.telemetry.install import enqueue_roll_out_telemetry
 
-            enqueue_roll_out_agents()
+            enqueue_roll_out_telemetry()
 
     def validate_report_retention(self) -> None:
         for field in (
@@ -126,7 +125,7 @@ class SuiteCloudSettings(Document):
         for field in TELEMETRY_LIMITS:
             if cint(self.get(field)) < 1:
                 frappe.throw(_("{0} must be at least 1.").format(_(self.meta.get_label(field))))
-        for field, (low, high) in AGENT_RANGES.items():
+        for field, (low, high) in TELEMETRY_RANGES.items():
             if not low <= cint(self.get(field)) <= high:
                 frappe.throw(
                     _("{0} must be between {1} and {2}.").format(_(self.meta.get_label(field)), low, high)
@@ -239,17 +238,6 @@ class SuiteCloudSettings(Document):
         except central.CentralError as e:
             frappe.throw(_("Central did not list the teams: {0}").format(e))
         return [{"value": t["name"], "label": team_label(t)} for t in teams]
-
-    @frappe.whitelist()
-    def build_agent(self) -> dict:
-        """Queues a build of the agent for every node architecture; one build runs at a time."""
-
-        frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent import build
-
-        if not build.find_go():
-            frappe.throw(_("No Go toolchain found on this bench host (PATH or /usr/local/go/bin/go)."))
-        return {"queued": build.enqueue_build(), "version": build.AgentBuild().version}
 
     @frappe.whitelist()
     def sync_regions(self) -> int:

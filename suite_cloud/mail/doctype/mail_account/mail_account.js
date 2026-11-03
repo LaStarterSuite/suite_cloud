@@ -35,7 +35,7 @@ frappe.ui.form.on('Mail Account', {
 		const color = worst >= 1 ? 'red' : worst >= 0.8 ? 'orange' : 'blue'
 		frm.dashboard.add_indicator(parts.map((p) => p.text).join(' · '), color)
 		if (usage.refused_day || usage.refused_month) {
-			const refused = __('Refused over a limit: {0} today · {1} this month', [
+			const refused = __('Recipients refused over a limit: {0} today · {1} this month', [
 				format_number(usage.refused_day, null, 0),
 				format_number(usage.refused_month, null, 0),
 			])

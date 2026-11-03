@@ -4,6 +4,31 @@
   become: true
   gather_facts: false
   tasks:
+    # The Suite Cloud Agent enforced the sending limits before Suite Cloud did. These three tasks
+    # stay until every server ran them once.
+    - name: Stop the retired agent
+      systemd:
+        name: suite-cloud-agent
+        state: stopped
+        enabled: false
+      failed_when: false  # no such unit
+
+    - name: Delete the retired agent
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/suite-cloud-agent.service
+        - /usr/local/bin/suite-cloud-agent
+        - /etc/suite-cloud-agent
+        - /var/lib/suite-cloud-agent
+      register: retired_agent_files
+
+    - name: Reload systemd without the agent
+      when: retired_agent_files.results[0] is changed
+      systemd:
+        daemon_reload: true
+
     # SUITE_CLOUD_TELEMETRY_TOKEN is read on start, by the WebHooks and the OTLP push.
     - name: Write the runtime environment
       no_log: true
@@ -47,5 +72,3 @@
         echo "$errors" | tail -n 20
         exit 1
       changed_when: false
-
-- import_playbook: install-agent.yml

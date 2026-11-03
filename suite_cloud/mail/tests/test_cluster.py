@@ -123,8 +123,8 @@ class TestStalwartCluster(IntegrationTestCase):
                 "only reach .test hosts",
                 create_server_job,
                 node,
-                "install-agent.yml",
-                title="Install agent",
+                "install-telemetry.yml",
+                title="Install telemetry token",
             )
         run.assert_not_called()
 

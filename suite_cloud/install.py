@@ -1,7 +1,6 @@
 import frappe
 
 from suite_cloud.telemetry import TELEMETRY_USER
-from suite_cloud.telemetry.agent.build import build_if_outdated
 from suite_cloud.telemetry.warehouse import Warehouse
 
 # The role every tenant owner holds: no desk, and on each DocType only what a tenant owns
@@ -18,8 +17,8 @@ def after_migrate() -> None:
 
 
 def setup() -> None:
-    """Creates the roles, the telemetry user and data source, fills new settings defaults and queues an
-    agent build when its sources changed; safe to run on every migrate."""
+    """Creates the roles, the telemetry user and data source, and fills new settings defaults; safe
+    to run on every migrate."""
 
     for role_name, desk_access in ROLES:
         ensure_role(role_name, desk_access)
@@ -27,7 +26,6 @@ def setup() -> None:
     ensure_user(TELEMETRY_USER, "Telemetry Agent")
     ensure_setting_defaults()
     Warehouse().ensure_data_source()
-    build_if_outdated()
 
 
 def ensure_role(role_name: str, desk_access: int) -> None:

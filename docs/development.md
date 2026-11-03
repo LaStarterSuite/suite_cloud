@@ -8,7 +8,6 @@ This guide sets up a development site for Suite Cloud. Each part builds on the p
 | Mail on a real Stalwart cluster | Also [DNS zones](#3-dns-zones) and [a Stalwart cluster](#4-a-stalwart-cluster) |
 | Hosting Suite sites on Frappe Cloud | Also [a Cloudflare tunnel](#5-a-cloudflare-tunnel) and [Frappe Cloud](#6-frappe-cloud) |
 | The telemetry API and the Insights dashboards | [A bench and a site](#1-a-bench-and-a-site), [tests and lint](#2-tests-and-lint) and [telemetry](#8-telemetry) |
-| The agent on the nodes (sending limits) | Also [the agent](#9-the-agent) and a Go toolchain |
 
 The tests need none of the outside services. They use fakes of Stalwart, Central, Pilot, the hosted site and the DNS providers.
 
@@ -37,7 +36,7 @@ bench --site suite-cloud.localhost set-config allow_tests true
 bench --site suite-cloud.localhost run-tests --app suite_cloud --module suite_cloud.hosting.tests.test_signup
 ```
 
-CI runs each test module on its own, in four jobs: Core (`suite_cloud/tests`), Mail (`suite_cloud/mail/tests`), Hosting (`suite_cloud/hosting/tests`) and Telemetry (`suite_cloud/telemetry/tests`), plus a Go job for the agent. Run the modules of the folder you changed.
+CI runs each test module on its own, in four jobs: Core (`suite_cloud/tests`), Mail (`suite_cloud/mail/tests`), Hosting (`suite_cloud/hosting/tests`) and Telemetry (`suite_cloud/telemetry/tests`). Run the modules of the folder you changed.
 
 The tests create records under `.frappe.test` and delete only those. So you can run them on the site that holds your real cluster and zones.
 
@@ -180,7 +179,7 @@ Servers and VPSs cost money until you remove them:
 
 Stalwart on each node and gateway pushes events and metrics to the [telemetry API](api/telemetry.md). Suite Cloud stages each batch as a parquet file under `private/files/telemetry/` and the five-minute job copies the files into the `suite_cloud_telemetry` DuckDB data source in Insights, which `migrate` creates.
 
-1. In **Suite Cloud Settings > Agent & Telemetry**, make sure **Enable Telemetry** is on. It is on by default on a new site. Take the **Telemetry Key** and **Telemetry Secret** from a Stalwart Node (`frappe.get_doc("Stalwart Node", name).get_password("telemetry_secret")` in a console).
+1. In **Suite Cloud Settings > Telemetry**, make sure **Enable Telemetry** is on. It is on by default on a new site. Take the **Telemetry Key** and **Telemetry Secret** from a Stalwart Node (`frappe.get_doc("Stalwart Node", name).get_password("telemetry_secret")` in a console).
 2. Send a batch as Stalwart's WebHook does:
 
    ```sh
@@ -194,14 +193,3 @@ Stalwart on each node and gateway pushes events and metrics to the [telemetry AP
 5. Open Insights and the **Stalwart Mail** workbook. Its dashboards read the `events` and `metrics` tables live. The `nodes` and `mail_domains` tables beside them are copies of the Stalwart Node, Egress Gateway and Mail Domain records, refreshed by the same job, which the Tenants and Clusters dashboards join on; a gateway is a node of its cluster with the role `gateway`. A delivery is attributed to the tenant by its sender domain, an incoming message by its recipient domain. The DMARC and TLS dashboards read the DMARC Report and TLS Report records live through the `Site DB` data source Insights ships; they need no telemetry.
 
 The workbook ships in `suite_cloud/telemetry/insights_workbook/stalwart/stalwart.json`. With developer mode on, every change you save in the Insights UI writes that file again, so edit the dashboards there and commit the file. A new workbook becomes a shipped one with `frappe.get_doc("Insights Workbook", name).mark_as_standard(name="<file name>", module="Telemetry")` in a console. The shipped name never changes: a rename deletes the workbook on every site and creates a new one.
-
-## 9. The agent
-
-The [Suite Cloud Agent](agent.md) is the Go program in `agent/` that the nodes run. It needs the Go version in `agent/go.mod` or newer, and nothing else: the module has no dependencies. `sudo apt install golang-go` is enough on Ubuntu 24.04; otherwise unpack a release from [go.dev/dl](https://go.dev/dl/) under `/usr/local`, as [the agent](agent.md#building) shows.
-
-```sh
-cd agent
-go test -race ./...
-```
-
-The bench host builds the binaries the nodes get: install Go there the same way, then click **Build Agent** in Suite Cloud Settings, or run `bench --site suite-cloud.localhost execute suite_cloud.telemetry.agent.build.build_agent`. The build lands in `sites/suite-cloud.localhost/private/files/agent/<version>/`. The Python tests of the build use a fake `go` on `PATH`, so they need no toolchain.

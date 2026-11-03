@@ -48,10 +48,6 @@
   "column_break_ssh",
   "ssh_public_key",
   "ssh_private_key",
-  "agent_section",
-  "agent_key",
-  "column_break_agent",
-  "agent_secret",
   "egress_tab",
   "egress_section",
   "default_egress_pool",
@@ -352,32 +348,6 @@
    "label": "SSH Private Key"
   },
   {
-   "fieldname": "agent_section",
-   "fieldtype": "Section Break",
-   "label": "Suite Cloud Agent"
-  },
-  {
-   "description": "Identifies the cluster to Suite Cloud. Generated on save.",
-   "fieldname": "agent_key",
-   "fieldtype": "Data",
-   "label": "Agent Key",
-   "no_copy": 1,
-   "read_only": 1,
-   "unique": 1
-  },
-  {
-   "fieldname": "column_break_agent",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Generated on save. Rotate Agent Secret replaces it and reinstalls the agents.",
-   "fieldname": "agent_secret",
-   "fieldtype": "Password",
-   "label": "Agent Secret",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
    "fieldname": "egress_tab",
    "fieldtype": "Tab Break",
    "label": "Sending"
@@ -420,7 +390,7 @@
   },
   {
    "default": "2000",
-   "description": "Ceiling for every account's Daily Send Limit and every tenant's default, in recipients per UTC day. Also the server's own cap per account while the Agents are down.",
+   "description": "Ceiling for every account's Daily Send Limit and every tenant's default, in recipients per UTC day. Also the server's own cap per account while Suite Cloud does not answer.",
    "fieldname": "max_daily_send_limit",
    "fieldtype": "Int",
    "label": "Max Daily Send Limit",
@@ -441,7 +411,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Generated on save.",
+   "description": "Generated on save. Stalwart's sending-limit hook sends it to Suite Cloud.",
    "fieldname": "quota_hook_token",
    "fieldtype": "Password",
    "label": "Quota Hook Token",
@@ -550,7 +520,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-11-02 16:00:00.000000",
+ "modified": "2026-11-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

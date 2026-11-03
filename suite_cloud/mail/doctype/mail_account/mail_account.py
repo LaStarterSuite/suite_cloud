@@ -8,6 +8,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
+from suite_cloud.mail import sending_limits
 from suite_cloud.mail.cluster.plan import DISABLED_ROLE_DESCRIPTION
 from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import delete_usage, sent_by_account
 from suite_cloud.mail.stalwart import get_account_client
@@ -25,6 +26,7 @@ from suite_cloud.mail.tenancy.usage import used_disk_by_name
 from suite_cloud.utils import alias_payloads, child_rows, utc_iso
 
 MIN_PASSWORD_LENGTH = 8
+LIMIT_FIELDS = ("cluster", "daily_send_limit", "monthly_send_limit")  # what the limits cache holds
 
 
 class MailAccount(QuotaHolder, Document):
@@ -135,6 +137,7 @@ class MailAccount(QuotaHolder, Document):
                 frappe.throw(_("Group {0} belongs to another tenant.").format(row.group))
 
     def after_insert(self) -> None:
+        sending_limits.clear_limits_after_commit(self.name)  # it may hold the address as no account
         if self.flags.skip_push:  # adopted: the cluster has it, credentials and all
             return
         sync.push_create(self, "accounts", self.stalwart_payload(self.flags.password))
@@ -147,6 +150,7 @@ class MailAccount(QuotaHolder, Document):
             raise
 
     def on_update(self) -> None:
+        self.clear_cached_limits()
         if self.is_new() or not self.stalwart_id or self.flags.skip_push:
             return
         before = self.get_doc_before_save()
@@ -178,9 +182,17 @@ class MailAccount(QuotaHolder, Document):
         if self.flags.password:
             self.set_password(self.flags.password)
 
+    def clear_cached_limits(self) -> None:
+        """A changed limit or cluster takes effect on the next recipient."""
+
+        before = self.get_doc_before_save()
+        if before and any(before.get(field) != self.get(field) for field in LIMIT_FIELDS):
+            sending_limits.clear_limits_after_commit(self.name)
+
     def on_trash(self) -> None:
         sync.push_destroy(self, "accounts")
         delete_usage(self.name)
+        sending_limits.clear_limits_after_commit(self.name)
 
     # --- Stalwart ------------------------------------------------------------------
 
@@ -319,12 +331,6 @@ class MailAccount(QuotaHolder, Document):
         )
 
 
-def on_doctype_update() -> None:
-    """The Agents' limits pull reads a cluster's accounts in ``modified`` order after a cursor."""
-
-    frappe.db.add_index("Mail Account", ["cluster", "modified"])
-
-
 def validate_password(password: str | None) -> None:
     if not password or len(password) < MIN_PASSWORD_LENGTH:
         frappe.throw(_("Password must be at least {0} characters.").format(MIN_PASSWORD_LENGTH))
@@ -344,8 +350,8 @@ def account_payload(
     send_usage: dict[str, int],
 ) -> dict:
     """The API shape of an account, from a document or a query row plus its related rows.
-    ``send_usage`` is what the Agents last reported for the UTC day and month: recipients sent
-    and messages refused over a limit."""
+    ``send_usage`` is what the last flush stored for the UTC day and month: recipients sent and
+    refused over a limit."""
 
     return {
         "email": row.email,

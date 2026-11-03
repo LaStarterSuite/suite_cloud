@@ -11,7 +11,7 @@ from suite_cloud.mail.doctype.stalwart_node.stalwart_node import validate_ip
 from suite_cloud.mail.stalwart import get_admin_client, get_client
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
-from suite_cloud.telemetry.agent.deploy import mark_token_installed, rotate_telemetry_token
+from suite_cloud.telemetry.install import mark_token_installed, rotate_telemetry_token
 from suite_cloud.utils import dkim_algorithms, get_config, log_exception, validate_version
 
 
@@ -281,7 +281,7 @@ class EgressGateway(Document):
         egress.check_gateway(self)
         mark_token_installed(self)  # the upgrade wrote stalwart.env
 
-    def after_install_agent(self, job: Document) -> None:
+    def after_install_telemetry(self, job: Document) -> None:
         mark_token_installed(self)
 
     def after_upgrade_failed(self, job: Document) -> None:

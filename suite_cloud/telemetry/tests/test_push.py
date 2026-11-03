@@ -1,5 +1,5 @@
-"""The telemetry API: a server's telemetry token signs Stalwart in, a cluster's credentials sign its
-Agents in, and WebHook events and OTLP metrics become rows of the events and metrics tables."""
+"""The telemetry API: a server's telemetry token signs Stalwart in, and WebHook events and OTLP
+metrics become rows of the events and metrics tables."""
 
 import json
 import re
@@ -26,7 +26,6 @@ from opentelemetry.proto.metrics.v1.metrics_pb2 import (
 )
 
 from suite_cloud.api.telemetry import authenticate, otlp, webhook
-from suite_cloud.api.telemetry.quota import limits
 from suite_cloud.api.tenant import InvalidInputError
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
 from suite_cloud.telemetry import (
@@ -43,8 +42,6 @@ from suite_cloud.telemetry.status import CACHE_KEY, forget_contacts
 from suite_cloud.tests.fixtures import configure_settings, production_logging
 
 NODE_IPS = ("203.0.113.5", "198.51.100.77")
-PATH = "/api/method/suite_cloud.api.telemetry.quota.limits"  # what an Agent calls
-
 WEBHOOK = "/api/v2/method/suite_cloud.api.telemetry.webhook"
 OTLP = "/api/v2/method/suite_cloud.api.telemetry.otlp"
 NANOS = 1_792_490_340_000_000_000  # 2026-10-20 09:59:00 UTC
@@ -103,21 +100,18 @@ class TelemetryApiTestCase(IntegrationTestCase):
         self.cluster = make_cluster()
         for ip in NODE_IPS:
             make_node(self.cluster, ipv4=ip)
-        self.token = self.cluster.agent_token
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.spool = Spool(Path(self.directory.name))
         patcher = patch("suite_cloud.api.telemetry.Spool", return_value=self.spool)
         patcher.start()
         self.addCleanup(patcher.stop)
-        self.request(self.token)
 
     def tearDown(self) -> None:
-        frappe.local.agent_cluster = None
         frappe.local.request = None
         frappe.set_user("Administrator")
 
-    def request(self, secret: str | None, path: str = PATH, scheme: str = "Bearer") -> None:
+    def request(self, secret: str | None, path: str = WEBHOOK, scheme: str = "Bearer") -> None:
         """A request as the auth hook sees it: signed in only when the bearer is a valid token."""
 
         headers = {}
@@ -130,60 +124,6 @@ class TelemetryApiTestCase(IntegrationTestCase):
 
     def staged(self, table=EVENTS) -> list[Path]:
         return self.spool.get_pending(table, 10)
-
-
-class TestAgentToken(TelemetryApiTestCase):
-    def test_the_cluster_credentials_sign_the_telemetry_user_in(self) -> None:
-        self.assertEqual(frappe.session.user, TELEMETRY_USER)
-        self.assertEqual(frappe.local.agent_cluster, self.cluster.name)
-
-    def test_other_requests_pass_through_untouched(self) -> None:
-        for secret, path, scheme in (
-            (None, PATH, "Bearer"),
-            (self.token, PATH, "Tenant"),
-            (self.token, "/api/method/frappe.ping", "Bearer"),  # Frappe's own OAuth bearer tokens
-        ):
-            with self.subTest(f"{scheme} on {path}"):
-                self.request(secret, path, scheme)
-                self.assertEqual(frappe.session.user, "Guest")
-
-    def test_a_wrong_secret_is_refused(self) -> None:
-        key = self.cluster.agent_key
-        for secret in (
-            "",
-            "not-the-secret",
-            self.token.upper(),
-            key,
-            f"{key}:",
-            f"{key}:wrong",
-            f"other:{self.token}",
-        ):
-            with self.subTest(secret), self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
-                self.request(secret)
-
-    def test_telemetry_off_refuses_everyone(self) -> None:
-        frappe.set_user("Administrator")
-        configure_settings(enable_telemetry=0)
-        with self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
-            self.request(self.token)
-
-    def test_a_rotated_secret_refuses_the_old_one_at_once(self) -> None:
-        frappe.set_user("Administrator")
-        cluster = frappe.get_doc("Stalwart Cluster", self.cluster.name)
-        cluster.label = "Unsaved edit"  # the form sends its unsaved edits with the call
-        with patch("suite_cloud.telemetry.agent.deploy.upgrade_agents", return_value=[]) as upgrade:
-            cluster.rotate_agent_secret()
-        upgrade.assert_called_once()
-        self.assertNotEqual(frappe.db.get_value("Stalwart Cluster", cluster.name, "label"), "Unsaved edit")
-
-        with self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
-            self.request(self.token)
-        self.request(cluster.agent_token)
-        self.assertEqual(frappe.session.user, TELEMETRY_USER)
-
-    def test_anyone_else_may_not_call_the_methods(self) -> None:
-        frappe.set_user("Administrator")
-        self.assertRaisesRegex(frappe.PermissionError, "telemetry agents", limits, host_ip=NODE_IPS[0])
 
 
 class PushTestCase(TelemetryApiTestCase):
@@ -199,8 +139,8 @@ class PushTestCase(TelemetryApiTestCase):
         frappe.local.telemetry_server = None
         super().tearDown()
 
-    def request(self, secret: str | None, path: str = PATH, scheme: str = "Bearer") -> None:
-        frappe.local.telemetry_server = frappe.local.agent_cluster = None
+    def request(self, secret: str | None, path: str = WEBHOOK, scheme: str = "Bearer") -> None:
+        frappe.local.telemetry_server = None
         super().request(secret, path, scheme)
 
 
@@ -226,8 +166,7 @@ class TestServerToken(PushTestCase):
             (f"{key}:wrong", WEBHOOK),
             (f"unknown:{self.node.get_password('telemetry_secret')}", WEBHOOK),
             (key, OTLP),
-            (self.token, WEBHOOK),  # the cluster's agent token opens only the agents' methods
-            (self.server_token, PATH),
+            (self.cluster.get_password("quota_hook_token"), WEBHOOK),  # opens only the sending-limit hook
         )
         for secret, path in cases:
             with self.subTest(path=path), self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
@@ -242,10 +181,18 @@ class TestServerToken(PushTestCase):
     def test_only_a_signed_in_server_may_push(self) -> None:
         frappe.local.telemetry_server = None
         self.assertRaisesRegex(frappe.PermissionError, "Stalwart server", webhook, events=[])
-        self.request(self.token)  # an agent
+        frappe.set_user("Administrator")
         self.assertRaisesRegex(frappe.PermissionError, "Stalwart server", otlp)
-        self.request(self.server_token, WEBHOOK)
-        self.assertRaisesRegex(frappe.PermissionError, "telemetry agents", limits, host_ip=NODE_IPS[0])
+
+    def test_other_requests_pass_through_untouched(self) -> None:
+        for secret, path, scheme in (
+            (None, WEBHOOK, "Bearer"),
+            (self.server_token, WEBHOOK, "Tenant"),
+            (self.server_token, "/api/method/frappe.ping", "Bearer"),  # Frappe's own OAuth bearer tokens
+        ):
+            with self.subTest(f"{scheme} on {path}"):
+                self.request(secret, path, scheme)
+                self.assertEqual(frappe.session.user, "Guest")
 
 
 class TestWebhook(PushTestCase):

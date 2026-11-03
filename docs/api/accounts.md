@@ -7,7 +7,7 @@ Module `suite_cloud.api.mail.accounts`, plus `mail.meta.get_account_options`. Th
 | `mail.accounts.list_accounts` | GET | A page of accounts |
 | `mail.accounts.get_account` | GET | One account with its disk usage |
 | `mail.accounts.get_quotas` | GET | Disk quota and usage for up to 500 addresses at once |
-| `mail.accounts.get_send_usage` | GET | Recipients and refused messages per day and month |
+| `mail.accounts.get_send_usage` | GET | Sent and refused recipients per day and month |
 | `mail.accounts.create_account` | POST | Creates a mailbox and returns its app password once |
 | `mail.accounts.update_account` | PATCH | Changes the name, description, quotas, send limits, locale, time zone or receiving |
 | `mail.accounts.set_account_enabled` | PUT | Enables or disables login and delivery |
@@ -64,7 +64,7 @@ An account's disk quota is whatever the tenant sets: `disk_quota_gb` of 0, or no
 
 ### Send limits
 
-`daily_send_limit` and `monthly_send_limit` cap the recipients the account may send to per UTC day and month; a message to 50 recipients counts as 50. Every account has both limits, each at least 1 and at most its cluster's max. Over a limit, the mail server refuses the message with `550 5.4.5`. A change applies within about a minute. `send_usage` is what the account sent today and this month, in recipients, and how many of its messages were refused over a limit (`refused_day`, `refused_month`), as the mail servers last reported it, up to a minute old. `create_account` and `update_account` take both limits. A new account starts at the tenant's default limits, which the [tenant object](tenant.md) shows, unless `create_account` sets them; `update_account` leaves out what it is not given. A tenant passes a limit only when an operator allowed it, `custom_send_limits` in the tenant object; otherwise the call is a 403.
+`daily_send_limit` and `monthly_send_limit` cap the recipients the account may send to per UTC day and month; a message to 50 recipients counts as 50. Every account has both limits, each at least 1 and at most its cluster's max. Over a limit, the mail server refuses each recipient that does not fit with `550 5.4.5` and sends the message to the rest. A change applies to the next recipient. `send_usage` is what the account sent today and this month, in recipients, and how many recipients were refused over a limit (`refused_day`, `refused_month`), up to a minute old. `create_account` and `update_account` take both limits. A new account starts at the tenant's default limits, which the [tenant object](tenant.md) shows, unless `create_account` sets them; `update_account` leaves out what it is not given. A tenant passes a limit only when an operator allowed it, `custom_send_limits` in the tenant object; otherwise the call is a 403.
 
 ### Aliases
 
@@ -111,7 +111,7 @@ Answers the account's history, newest first, as far back as Suite Cloud keeps it
 }
 ```
 
-`sent` counts recipients and `refused` the messages refused over a limit. `limit` is the daily or monthly limit the account had while the period was current; 0 means no limit. `months` holds the months the days fall in. A day with nothing sent is left out.
+`sent` counts recipients and `refused` the recipients refused over a limit. `limit` is the daily or monthly limit the account had while the period was current; 0 means no limit. `months` holds the months the days fall in. A day with nothing sent is left out.
 
 ## `create_account`
 

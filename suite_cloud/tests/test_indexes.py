@@ -7,7 +7,6 @@ COMPOSITE_INDEXES = {
     "DNS Record": [("dns_zone", "host")],
     "DMARC Report": [("tenant", "date_range_end")],
     "TLS Report": [("tenant", "date_range_end")],
-    "Mail Account": [("cluster", "modified")],
     "Stalwart Node": [("cluster", "ipv4_address")],
     "Egress Gateway": [("cluster", "ipv4_address")],
     "Mailing List Recipient": [("email",), ("tenant", "mailing_list", "email")],
@@ -24,7 +23,7 @@ UNIQUE_INDEXES = {
     "Mail Address Alias": [("alias_email",)],
     "Mail Send Usage": [("account", "period")],
     "Mailing List Recipient": [("mailing_list", "email")],
-    "Stalwart Cluster": [("agent_key",), ("dns_zone", "label")],
+    "Stalwart Cluster": [("dns_zone", "label")],
 }
 
 NAME_FIELDS = {

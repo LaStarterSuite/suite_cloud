@@ -55,7 +55,7 @@ HISTORY_DAYS_CAP = 400
 @frappe.whitelist(methods=["GET"])
 @mail_api
 def get_send_usage(email: str, days: int = 30) -> dict:
-    """The account's recipients and refused messages per UTC day for the last ``days`` (at most
+    """The account's sent and refused recipients per UTC day for the last ``days`` (at most
     400) and per month, newest first, each with the limit it had then; only as far back as the
     Sending Usage Retention keeps."""
 

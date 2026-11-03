@@ -34,12 +34,12 @@ The app has three modules, so one CODEOWNERS line can cover each product:
 | --- | --- | --- |
 | **Suite Cloud** | `suite_cloud/suite_cloud` | What every hosted product shares: DNS Zone, DNS Record, Server Job, Suite Tenant, Suite Cloud Settings, plus `provisioning` (Ansible over SSH) and `dns` (provider client, resolver). |
 | **Mail** | `suite_cloud/mail` | The mail product: Stalwart Store, Cluster, Node, Egress Gateway and IP Pool, the mail directory (Mail Domain, Mail Account, Mail Group, Mailing List), and the `stalwart`, `cluster` and `tenancy` packages. |
-| **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and the `agent` package that builds the Suite Cloud Agent (the Go program in `agent/`) and installs it with the telemetry tokens. |
+| **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and `install`, which installs the telemetry tokens. |
 | **Hosting** | `suite_cloud/hosting` | Suite sites on Frappe Cloud: Region, Virtual Machine, Suite Site, Suite Tenant Request, the `central` clients (Central, Pilot, the site's REST API) and the `machines`, `sites`, `domains` and `capacity` steps. |
 
 The tenant-facing API is split the same way: `suite_cloud.api.tenant` for what any product needs
 (authentication, `ping`, the tenant profile) and `suite_cloud.api.mail` for the mail directory.
-`suite_cloud.api.telemetry` is for Stalwart and the agents on the nodes, not for tenants.
+`suite_cloud.api.telemetry` and `suite_cloud.api.sending_limits` are for Stalwart, not for tenants.
 
 ## The pieces
 
@@ -117,9 +117,10 @@ contact email; everything else sits at permission level 1, for System Managers.
 Day-to-day buttons: **Drain** takes a node out of DNS before maintenance, **Upgrade Nodes** rolls a
 new Stalwart version out one node at a time (each node is drained first, except the last one in the
 cluster hostname's DNS, which the health check after the upgrade needs), **Sync Config** pushes the generated configuration
-again, **Check Drift** reports what differs from it without changing anything, and **Upgrade Agents**
-installs each server's telemetry token and the current [Suite Cloud Agent](docs/agent.md) build; the
-cluster, node and gateway forms show when each server last reported.
+again, **Check Drift** reports what differs from it without changing anything, and **Install Telemetry Tokens**
+installs each server's telemetry token; the cluster, node and gateway forms show when each server last
+reported. Suite Cloud enforces the [sending limits](docs/sending-limits.md) of Mail Accounts through an
+MTA Hook in the cluster plan.
 
 ### Telemetry
 
@@ -129,11 +130,11 @@ Each node and gateway has its own telemetry token, made with the record. Provisi
 
 OTLP starts only when Stalwart starts. These jobs restart Stalwart:
 
-1. **Upgrade Agents** on a cluster runs a job per Active or Draining node and Active gateway. Each job writes the token to `stalwart.env`, restarts Stalwart when the file changed, and installs the agent that only enforces sending limits. A gateway's agent stops.
+1. **Install Telemetry Tokens** on a cluster runs a job per Active or Draining node and Active gateway. Each job writes the token to `stalwart.env` and restarts Stalwart when the file changed.
 2. When the last server of the cluster, or the gateway, has its token, a job pushes the config and restarts Stalwart on each server once more.
-3. **Upgrade Agents** on a cluster where every server has its token pushes and restarts again. Run it when step 2 failed. Its error shows on the cluster's form.
+3. **Install Telemetry Tokens** on a cluster where every server has its token pushes and restarts again. Run it when step 2 failed. Its error shows on the cluster's form.
 
-The servers restart in parallel jobs, not one at a time. **Rotate Telemetry Token** on a node or gateway form makes a new secret and restarts Stalwart on that server. A change of the metrics interval or of **Public URL** takes effect after Upgrade Agents. A Sync Config alone does not restart Stalwart.
+The servers restart in parallel jobs, not one at a time. **Rotate Telemetry Token** on a node or gateway form makes a new secret and restarts Stalwart on that server. A change of the metrics interval or of **Public URL** takes effect after Install Telemetry Tokens. A Sync Config alone does not restart Stalwart.
 
 ### Adopting a server that already has a directory
 
@@ -260,7 +261,7 @@ a local sink as its only way out. It needs a `stalwart` on `PATH` of the version
 install and is skipped without one; CI installs it.
 
 CI (`.github/workflows/ci.yml`) runs one job per module folder (Core, Mail, Hosting, Telemetry) plus
-Ruff and a Go job for the agent, so a future product adds a matrix entry rather than a workflow.
+Ruff, so a future product adds a matrix entry rather than a workflow.
 
 The bootstrap path has been run end to end against a real single-node cluster on Stalwart
 v0.16.20 (DigitalOcean DNS, Let's Encrypt wildcard certificate through DNS-01). Lessons that

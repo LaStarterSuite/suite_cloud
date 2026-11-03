@@ -12,7 +12,7 @@ from suite_cloud.mail.stalwart import forget_sessions, get_client, has_credentia
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.mail.stalwart.errors import StalwartError, StalwartUnauthorizedError
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
-from suite_cloud.telemetry.agent.deploy import agent_variables, mark_token_installed
+from suite_cloud.telemetry.install import mark_token_installed, telemetry_variables
 from suite_cloud.utils import get_config, log_error, log_exception
 
 if TYPE_CHECKING:
@@ -28,7 +28,6 @@ SECRET_VARIABLES = (
     "config_json",
     "bootstrap_ndjson",
     "cluster_ndjson",
-    "agent_config_json",
 )
 
 
@@ -158,9 +157,7 @@ def build_node_variables(context: dict) -> dict:
             *plan.secret_strings(recovery_plan),
         ],
     }
-    agent = agent_variables(node, context)
-    variables["__secret_values__"] += agent.pop("__secret_values__")
-    variables.update(agent)
+    variables.update(telemetry_variables(context))
     return variables
 
 
