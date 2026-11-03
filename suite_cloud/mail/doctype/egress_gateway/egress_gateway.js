@@ -23,9 +23,8 @@ frappe.ui.form.on('Egress Gateway', {
 			frm.add_custom_button(__('Provision'), () => frm.events.call(frm, 'provision', __('Queueing...')), __('Actions'))
 		}
 		if (['Provisioned', 'Active'].includes(frm.doc.status)) {
-			frm.events.show_agent_status(frm)
-			frm.add_custom_button(__('Install Agent'), () => frm.events.call(frm, 'install_agent', __('Queueing...')), __('Actions'))
-			frm.add_custom_button(__('Show Agent Config'), () => frm.events.show_agent_config(frm), __('Actions'))
+			frm.events.show_telemetry_status(frm)
+			frm.add_custom_button(__('Rotate Telemetry Token'), () => frm.events.rotate_telemetry_token(frm), __('Actions'))
 			frm.add_custom_button(
 				__('Re-provision'),
 				() =>
@@ -71,21 +70,17 @@ frappe.ui.form.on('Egress Gateway', {
 		})
 	},
 
-	show_agent_status(frm) {
-		frappe.xcall('suite_cloud.telemetry.agent.status.get_agent_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
-			const colors = { ok: 'green', outdated: 'orange', silent: 'red', unknown: 'blue' }
+	show_telemetry_status(frm) {
+		frappe.xcall('suite_cloud.telemetry.status.get_server_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
+			const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
 			frm.dashboard.add_comment(frappe.utils.escape_html(status.message), colors[status.state], true)
 		})
 	},
 
-	show_agent_config(frm) {
-		frm.call({ doc: frm.doc, method: 'show_agent_config' }).then(({ message }) => {
-			const note = message.telemetry_enabled
-				? __('What the next Install Agent writes to {0}. Secrets are masked.', ['<code>/etc/suite-cloud-agent/config.json</code>'])
-				: __('Enable Telemetry is off: Install Agent would stop the agent instead of writing this file.')
-			const config = frappe.utils.escape_html(JSON.stringify(message.config, null, 2))
-			frappe.msgprint({ title: __('Agent Config'), wide: true, message: `<p class="text-muted">${note}</p><pre>${config}</pre>` })
-		})
+	rotate_telemetry_token(frm) {
+		frappe.confirm(__('Replace the telemetry secret of {0}? A job writes it to the server and restarts Stalwart.', [frm.doc.hostname]), () =>
+			frm.events.call(frm, 'rotate_telemetry_token', __('Queueing...')),
+		)
 	},
 
 	call(frm, method, freeze_message, done) {

@@ -4,7 +4,7 @@
   become: true
   gather_facts: true
   tasks:
-    # Telemetry off, or no build yet: a node keeps no agent it cannot use.
+    # Telemetry off, no build yet, or a gateway: a server keeps no agent it cannot use.
     - name: Stop the agent while telemetry is off
       when: not (agent_enabled | bool)
       systemd:

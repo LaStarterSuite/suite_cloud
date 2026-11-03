@@ -63,7 +63,10 @@ CLUSTER_ROLES = {
     "outbound": {
         "name": "outbound",
         "description": "Delivers the outbound queue only",
-        "tasks": {"@type": "EnableSome", "taskTypes": as_set(["outboundMta", "taskQueueProcessing"])},
+        "tasks": {
+            "@type": "EnableSome",
+            "taskTypes": as_set(["outboundMta", "taskQueueProcessing", "metricsPush"]),
+        },
         "listeners": {"@type": "DisableAll"},
     },
 }
@@ -72,6 +75,13 @@ CLUSTER_ROLES = {
 # --- telemetry ------------------------------------------------------------------------
 
 LOG_DIRECTORY = "/var/log/stalwart"  # created by install-stalwart.yml, pruned by its tmpfiles rule
+TELEMETRY_TOKEN_VARIABLE = "SUITE_CLOUD_TELEMETRY_TOKEN"  # in stalwart.env; the WebHooks and OTLP send it
+
+
+def get_telemetry_token(server: Document) -> str:
+    """``<telemetry key>:<telemetry secret>`` of a Stalwart Node or Egress Gateway."""
+
+    return f"{server.telemetry_key}:{server.get_password('telemetry_secret')}"
 
 
 def log_tracer(level: str = "info") -> dict:
@@ -113,21 +123,6 @@ def tracer_operation() -> dict:
         "matchOn": ["@type"],
         "value": {"log": log_tracer(), "journal": journal},
     }
-
-
-METRICS_USERNAME = "telemetry"  # the agent's basic-auth user on /metrics/prometheus
-
-
-def metrics_operation(secret: str, enabled: bool = True) -> dict:
-    """The Prometheus exporter behind a password: it sits on the public HTTPS listener, and without
-    credentials Stalwart serves it to anyone. Off, the exporter is disabled."""
-
-    if not enabled:
-        return {"@type": "update", "object": "Metrics", "value": {"prometheus": {"@type": "Disabled"}}}
-    if not secret:
-        raise ValueError("The metrics password is not set")
-    prometheus = {"@type": "Enabled", "authUsername": METRICS_USERNAME, "authSecret": secret_value(secret)}
-    return {"@type": "update", "object": "Metrics", "value": {"prometheus": prometheus}}
 
 
 # --- DNS resolution -------------------------------------------------------------------
@@ -183,7 +178,7 @@ def cluster_plan(cluster: Document) -> list[dict]:
         {"@type": "update", "object": "Coordinator", "value": {"@type": cluster.coordinator or "Disabled"}},
         *defaults_plan(),
         tracer_operation(),
-        metrics_operation(cluster.get_password("metrics_password"), bool(cluster.enable_metrics)),
+        *telemetry_operations(cluster),
     ]
 
     dns_server = dns_server_object(cluster)
@@ -388,6 +383,15 @@ def egress_operations(cluster: Document) -> list[dict]:
     return cluster_operations(cluster)
 
 
+def telemetry_operations(target: Document) -> list[dict]:
+    """The WebHooks and metrics push of a cluster or gateway; filled in by
+    suite_cloud.mail.cluster.telemetry."""
+
+    from suite_cloud.mail.cluster.telemetry import get_operations  # it builds on this module
+
+    return get_operations(target)
+
+
 def quota_operations(cluster: Document) -> list[dict]:
     """The sending-limit hook and its backstop; filled in by suite_cloud.mail.cluster.quota."""
 
@@ -425,6 +429,7 @@ def node_env(node: Document, mode: str = "normal") -> dict[str, str]:
     }
     if mode == "normal":
         env["STALWART_ROLE"] = node.role or "full"
+        env[TELEMETRY_TOKEN_VARIABLE] = get_telemetry_token(node)
         return env
 
     env["STALWART_RECOVERY_ADMIN"] = f"{cluster.admin_username}:{cluster.get_password('admin_password')}"

@@ -1,4 +1,4 @@
-// Command suite-cloud-agent ships a node's logs and metrics to Suite Cloud's telemetry API.
+// Command suite-cloud-agent enforces Suite Cloud's sending limits on a Stalwart node.
 package main
 
 import (
@@ -19,7 +19,7 @@ var version = "dev"
 
 func main() {
 	configPath := flag.String("config", config.DefaultPath, "path of config.json")
-	check := flag.Bool("check", false, "validate the config, the state directory and the log paths, then exit")
+	check := flag.Bool("check", false, "validate the config and the state directory, then exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 

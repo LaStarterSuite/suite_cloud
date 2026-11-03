@@ -2,12 +2,14 @@ package sender
 
 import (
 	"context"
+	"math/rand/v2"
 	"sync"
 	"time"
 )
 
 // Limiter allows requests_per_minute requests per wall-clock minute, the fixed window Suite Cloud
-// counts per host. Logs and metrics share one Limiter because the server counts both together.
+// counts per host. The limit pull and the usage push share one Limiter because the server counts
+// them together.
 type Limiter struct {
 	mu           sync.Mutex
 	perMinute    int
@@ -59,6 +61,12 @@ func (l *Limiter) take() time.Duration {
 	}
 	l.used++
 	return 0
+}
+
+// nextMinute is when the server's window opens again, a little past the boundary so a skewed
+// clock does not land the retry in the same window.
+func nextMinute(now time.Time) time.Time {
+	return now.Truncate(time.Minute).Add(time.Minute + time.Second + time.Duration(rand.IntN(4000))*time.Millisecond)
 }
 
 func sleep(ctx context.Context, d time.Duration) error {

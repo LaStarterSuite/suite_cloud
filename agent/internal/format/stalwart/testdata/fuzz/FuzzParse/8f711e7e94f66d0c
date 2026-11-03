@@ -1,2 +1,0 @@
-go test fuzz v1
-[]byte("2026-10-20T0:00:00Z INFO  (a.b) r = X (c.d){e = [ (g.h) { i = 10-")

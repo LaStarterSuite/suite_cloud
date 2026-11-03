@@ -54,7 +54,6 @@ class StalwartCluster(Document):
         default_egress_pool: DF.Link | None
         dns_zone: DF.Link
         drift_report: DF.JSON | None
-        enable_metrics: DF.Check
         enabled: DF.Check
         hostname: DF.Data
         in_memory_store: DF.Link | None
@@ -62,7 +61,6 @@ class StalwartCluster(Document):
         label: DF.Data | None
         last_config_sync_at: DF.Datetime | None
         last_config_sync_error: DF.SmallText | None
-        metrics_password: DF.Password | None
         max_daily_send_limit: DF.Int
         max_monthly_send_limit: DF.Int
         quota_hook_token: DF.Password | None
@@ -87,8 +85,6 @@ class StalwartCluster(Document):
         self.admin_username = self.admin_username or "admin"
         if not self.admin_password:
             self.admin_password = frappe.generate_hash(length=32)
-        if not self.metrics_password:
-            self.metrics_password = frappe.generate_hash(length=32)
         if not self.quota_hook_token:
             self.quota_hook_token = frappe.generate_hash(length=32)
         self.agent_key = self.agent_key or frappe.generate_hash(length=20)
@@ -380,7 +376,8 @@ class StalwartCluster(Document):
 
     @frappe.whitelist()
     def upgrade_agents(self) -> list[str]:
-        """Installs the built Suite Cloud Agent on every active or draining node and every active gateway; Stalwart keeps running."""
+        """Installs the telemetry token and the built Suite Cloud Agent on every active or draining
+        node and every active gateway, and switches Stalwart's push on once all have the token."""
 
         frappe.only_for("System Manager")
         from suite_cloud.telemetry.agent.deploy import upgrade_agents

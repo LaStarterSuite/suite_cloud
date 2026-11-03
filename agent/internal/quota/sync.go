@@ -1,6 +1,7 @@
 package quota
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -15,6 +16,7 @@ const (
 	yesterdayGrace = 10 * time.Minute
 	limitsMethod   = "quota.limits"
 	usageMethod    = "quota.usage"
+	usageBatchSize = 5000 // Suite Cloud's default records per request
 )
 
 // Limits copies the cluster's limits from Suite Cloud into the store: what changed since the last
@@ -130,7 +132,7 @@ type Usage struct {
 	HostIP    string
 	Touched   *Touched
 	Interval  time.Duration
-	BatchSize int // records per request
+	BatchSize int // records per request; zero means usageBatchSize
 	Logger    *slog.Logger
 	Now       func() time.Time
 	pushed    Periods           // the periods of the last push that went through; zero until one does
@@ -286,7 +288,7 @@ func (u *Usage) dropStaleOwed(yesterday string) {
 // send posts the records in requests of at most BatchSize records. When one fails, the accounts
 // of the records not taken stay touched, and their yesterday records owed.
 func (u *Usage) send(ctx context.Context, records []usageRecord, periods pushPeriods) error {
-	size := max(u.BatchSize, 1)
+	size := cmp.Or(u.BatchSize, usageBatchSize)
 	for start := 0; start < len(records); start += size {
 		batch := records[start:min(start+size, len(records))]
 		var answer struct{}

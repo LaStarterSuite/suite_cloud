@@ -13,7 +13,7 @@ from frappe.utils import get_files_path, get_url_to_form, now_datetime
 
 from suite_cloud.mail.tests.fixtures import error_log_count
 from suite_cloud.telemetry import EVENTS, METRICS
-from suite_cloud.telemetry.alerts import ERROR_RATE, MINIMUM_EVENTS, SILENT_HOST, Alerts
+from suite_cloud.telemetry.alerts import ERROR_RATE, SILENT_HOST, Alerts
 from suite_cloud.telemetry.spool import Spool
 from suite_cloud.telemetry.warehouse import Warehouse
 from suite_cloud.tests.fixtures import configure_settings
@@ -28,7 +28,7 @@ class TestAlerts(IntegrationTestCase):
     def setUp(self) -> None:
         configure_settings(
             telemetry_silence_minutes=30,
-            telemetry_error_rate_percent=5,
+            telemetry_errors_per_hour=5,
             telemetry_alert_recipients="ops@example.test, oncall@example.test\n",
         )
         frappe.db.delete("Telemetry Alert")
@@ -67,7 +67,7 @@ class TestAlerts(IntegrationTestCase):
         self.spool.write(table, table.get_batch(envelope, rows), envelope["batch_id"])
         self.warehouse.load_pending()
 
-    def events(self, errors: int, total: int = MINIMUM_EVENTS) -> list[dict]:
+    def events(self, errors: int, total: int = 100) -> list[dict]:
         return [
             {
                 "timestamp": NOW - timedelta(minutes=5),
@@ -94,7 +94,7 @@ class TestAlerts(IntegrationTestCase):
         opened = self.open_alerts()
         self.assertEqual(set(opened), {(SILENT_HOST, QUIET), (ERROR_RATE, NOISY)})
         self.assertIn("No batch received since", opened[(SILENT_HOST, QUIET)])
-        self.assertEqual(opened[(ERROR_RATE, NOISY)], "6 of 100 events in the last hour are errors (6.0%).")
+        self.assertEqual(opened[(ERROR_RATE, NOISY)], "6 error events in the last hour.")
         alert = frappe.get_doc("Telemetry Alert", {"host_ip": QUIET})
         self.assertEqual(
             (alert.title, alert.hostname, alert.status), ("Silent Host: node-5", "node-5", "Open")
@@ -107,7 +107,7 @@ class TestAlerts(IntegrationTestCase):
         noisy = frappe.get_doc("Telemetry Alert", {"host_ip": NOISY})
         message = self.mails.call_args.kwargs["message"]
         self.assertIn("node-6 is logging too many errors", message)
-        self.assertIn("6 of 100 events in the last hour are errors", message)
+        self.assertIn("6 error events in the last hour", message)
         self.assertIn(get_url_to_form("Telemetry Alert", noisy.name), message)
         self.assertNotIn(">Resolved<", message)
         (icon,) = self.mails.call_args.kwargs["inline_images"]
@@ -122,8 +122,9 @@ class TestAlerts(IntegrationTestCase):
         self.report(NOISY, NOW, self.events(errors=8))
         self.assertEqual(self.alerts.check(), {"opened": 0, "resolved": 0})
         self.assertEqual(frappe.db.count("Telemetry Alert"), 1)
-        self.assertIn("14 of 200", self.open_alerts()[(ERROR_RATE, NOISY)])
+        self.assertIn("14 error events", self.open_alerts()[(ERROR_RATE, NOISY)])
 
+        configure_settings(telemetry_errors_per_hour=20)  # more events of other levels change nothing
         self.report(NOISY, NOW, self.events(errors=0, total=1000))
         self.assertEqual(self.alerts.check(), {"opened": 0, "resolved": 1})
 
@@ -196,9 +197,10 @@ class TestAlerts(IntegrationTestCase):
         self.assertEqual(self.alerts.check(), {"opened": 1, "resolved": 0})
         self.assertEqual(frappe.db.count("Telemetry Alert", {"host_ip": QUIET, "status": "Open"}), 1)
 
-    def test_a_quiet_hour_or_a_rate_under_the_threshold_opens_nothing(self) -> None:
-        self.report(NOISY, NOW, self.events(errors=4))  # 4%
-        self.report(QUIET, NOW, self.events(errors=10, total=20))  # 50% of too few
+    def test_errors_under_the_threshold_or_older_than_an_hour_open_nothing(self) -> None:
+        self.report(NOISY, NOW, self.events(errors=4, total=4))  # every event an error, but only 4
+        old = [{**event, "timestamp": NOW - timedelta(minutes=61)} for event in self.events(errors=10)]
+        self.report(QUIET, NOW, old)
 
         self.assertEqual(self.alerts.check(), {"opened": 0, "resolved": 0})
         self.assertEqual(self.open_alerts(), {})

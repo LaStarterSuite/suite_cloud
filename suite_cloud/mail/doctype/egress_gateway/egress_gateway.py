@@ -6,11 +6,12 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, now
 
-from suite_cloud.mail.cluster import dns, egress, naming, plan
+from suite_cloud.mail.cluster import dns, egress, naming, plan, telemetry
 from suite_cloud.mail.doctype.stalwart_node.stalwart_node import validate_ip
 from suite_cloud.mail.stalwart import get_admin_client, get_client
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
+from suite_cloud.telemetry.agent.deploy import mark_token_installed, rotate_telemetry_token
 from suite_cloud.utils import dkim_algorithms, get_config, log_exception, validate_version
 
 
@@ -42,7 +43,9 @@ class EgressGateway(Document):
         ssh_user: DF.Data | None
         ssh_verified: DF.Check
         stalwart_version: DF.Data | None
-        metrics_password: DF.Password | None
+        telemetry_key: DF.Data | None
+        telemetry_secret: DF.Password | None
+        telemetry_token_installed: DF.Check
         title: DF.Data | None
         status: DF.Literal["Pending", "Provisioning", "Provisioned", "Active", "Failed", "Disabled"]
     # end: auto-generated types
@@ -58,8 +61,7 @@ class EgressGateway(Document):
         self.admin_username = self.admin_username or "admin"
         if not self.admin_password:
             self.admin_password = frappe.generate_hash(length=32)
-        if not self.metrics_password:
-            self.metrics_password = frappe.generate_hash(length=32)
+        telemetry.fill_token(self)
         if not self.data_store:
             self.data_store = self.create_local_store().name
 
@@ -248,21 +250,11 @@ class EgressGateway(Document):
         return egress.upgrade_gateway(self).name
 
     @frappe.whitelist()
-    def install_agent(self) -> str:
-        frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.deploy import install_agent
-
-        return install_agent(self).name
-
-    @frappe.whitelist()
-    def show_agent_config(self) -> dict:
-        """The agent's config.json as the next Install Agent writes it, secrets masked."""
+    def rotate_telemetry_token(self) -> str | None:
+        """A new telemetry secret; a job writes it to stalwart.env and restarts Stalwart."""
 
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.build import is_telemetry_enabled
-        from suite_cloud.telemetry.agent.deploy import masked_agent_config
-
-        return {"config": masked_agent_config(self), "telemetry_enabled": is_telemetry_enabled()}
+        return rotate_telemetry_token(self)
 
     @frappe.whitelist()
     def replace_dkim_keys(self) -> None:
@@ -287,6 +279,10 @@ class EgressGateway(Document):
         self.db_set("installed_version", self.stalwart_version, update_modified=False)
         self.set_status("Provisioned")
         egress.check_gateway(self)
+        mark_token_installed(self)  # the upgrade wrote stalwart.env
+
+    def after_install_agent(self, job: Document) -> None:
+        mark_token_installed(self)
 
     def after_upgrade_failed(self, job: Document) -> None:
         self.set_status("Failed", job.error_log)

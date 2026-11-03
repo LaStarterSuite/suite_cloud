@@ -12,7 +12,7 @@ from suite_cloud.mail.stalwart import forget_sessions, get_client, has_credentia
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.mail.stalwart.errors import StalwartError, StalwartUnauthorizedError
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
-from suite_cloud.telemetry.agent.deploy import agent_variables
+from suite_cloud.telemetry.agent.deploy import agent_variables, mark_token_installed
 from suite_cloud.utils import get_config, log_error, log_exception
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ BOOTSTRAP_DEADLINE_MINUTES = 45
 NODE_VARIABLES_BUILDER = "suite_cloud.mail.cluster.bootstrap.build_node_variables"
 SECRET_VARIABLES = (
     "admin_password",
+    "env_normal",
     "env_bootstrap",
     "env_recovery",
     "config_json",
@@ -152,11 +153,12 @@ def build_node_variables(context: dict) -> dict:
         "__secret_keys__": list(SECRET_VARIABLES),
         "__secret_values__": [
             cluster.get_password("admin_password"),
+            plan.get_telemetry_token(node),
             *plan.secret_strings(bootstrap_plan),
             *plan.secret_strings(recovery_plan),
         ],
     }
-    agent = agent_variables(node, restart=bool(context.get("agent_restart")))
+    agent = agent_variables(node, context)
     variables["__secret_values__"] += agent.pop("__secret_values__")
     variables.update(agent)
     return variables
@@ -171,6 +173,7 @@ def after_provision(node: Document, job: Document) -> None:
     cluster = node.get_cluster()
     if node.is_bootstrap_node and cluster.status == "Failed" and cluster.bootstrap_node == node.name:
         cluster.db_set("status", "Bootstrapping", update_modified=False)  # a retried bootstrap succeeded
+    mark_token_installed(node)  # while the node is not running yet, so the push follows no change
     node.db_set(
         {
             "status": "Provisioned",
@@ -195,6 +198,7 @@ def after_upgrade(node: Document, job: Document) -> None:
     )
     node.set_status("Provisioned")
     check_node(node)
+    mark_token_installed(node)  # the upgrade wrote stalwart.env
 
 
 # --- health ------------------------------------------------------------------------------------

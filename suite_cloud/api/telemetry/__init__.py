@@ -1,57 +1,65 @@
-"""The telemetry API: the agents on the nodes push batches of events and metrics.
+"""The telemetry API: Stalwart pushes its events and metrics, and the agents call the sending limits.
 
-An agent sends ``Authorization: Bearer <agent key>:<agent secret>``, its cluster's credentials. The
-``authenticate`` auth hook finds the cluster, checks the secret and runs the request as the
-telemetry user, which holds no role, so the token opens nothing but these methods, and only for
-that cluster's own servers. A batch is validated whole, staged as one parquet file and acknowledged;
-the warehouse loads it later. Nothing here touches the site database; the cache notes which host
-sent a batch last, for the agent status on the node forms.
+Stalwart sends ``Authorization: Bearer <telemetry key>:<telemetry secret>``, the token of the one
+node or gateway that sent the request, to ``webhook`` and ``otlp``. An agent sends its cluster's
+``<agent key>:<agent secret>`` to the sending-limit methods in ``quota``. The ``authenticate`` auth hook checks the
+token and runs the request as the telemetry user, which holds no role, so a token opens nothing
+but these methods. A batch is staged as one parquet file and acknowledged; the warehouse loads it
+later. The cache notes which host sent a batch last, for the status on the node forms.
 """
 
-import ipaddress
 import math
-import re
 import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
 from typing import NoReturn
-from uuid import UUID, uuid7
 
 import frappe
-import orjson
 from frappe import _
 from frappe.utils import cint
 from frappe.utils.password import get_decrypted_password
+from google.protobuf.message import DecodeError
+from werkzeug.wrappers import Response
 
 from suite_cloud.api.tenant import InvalidInputError, assert_arguments, throttle
-from suite_cloud.telemetry import EVENTS, METRICS, TELEMETRY_USER, TelemetryTable
-from suite_cloud.telemetry.agent.status import record_contact
+from suite_cloud.telemetry import EVENTS, METRICS, TELEMETRY_USER
+from suite_cloud.telemetry.push import (
+    STREAM_EVENTS,
+    get_batch_id,
+    get_event_rows,
+    get_metric_rows,
+    get_metrics_batch_id,
+)
 from suite_cloud.telemetry.spool import Spool
-from suite_cloud.utils import get_config
+from suite_cloud.telemetry.status import record_contact
+from suite_cloud.utils import get_config, log_error
 
 API_PATHS = ("/api/v2/method/suite_cloud.api.telemetry.", "/api/method/suite_cloud.api.telemetry.")
 DEFAULT_REQUESTS_PER_MINUTE = 300  # the settings' defaults, used until the site has them
-DEFAULT_RECORDS_PER_REQUEST = 5000
-HOSTNAME_LIMIT = 253
-SOURCE_PATTERN = re.compile(r"[a-z0-9_-]{1,64}")
-METRIC_TYPES = ("counter", "gauge", "histogram")
+RECORDS_PER_REQUEST = 5000  # the usage records of one sending-limit call
+WEBHOOK_EVENT_LIMIT = 65536  # what one request may stage; Stalwart sends every waiting event at once
+PUSH_METHODS = ("webhook", "otlp")
+SOURCE = "stalwart"
 SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")
 INTEGER_LIMIT = 2**63  # the metrics table stores counts as 64-bit integers
 
 
 def authenticate() -> None:
-    """Frappe auth hook: a bearer token on the telemetry API is an Agent's cluster credentials.
+    """Frappe auth hook: a bearer token on the telemetry API is a server's telemetry token on
+    ``webhook`` and ``otlp``, and an Agent's cluster credentials on the other methods.
 
     Elsewhere a bearer token is Frappe's own OAuth business, so the hook leaves it alone.
     """
 
     scheme, _space, token = frappe.get_request_header("Authorization", "").partition(" ")
-    if scheme.lower() != "bearer" or not frappe.request.path.startswith(API_PATHS):
+    path = frappe.request.path
+    if scheme.lower() != "bearer" or not path.startswith(API_PATHS):
         return
 
-    cluster = get_agent_cluster(token.strip())
-    if not cluster:
+    is_push = path.rpartition(".")[2] in PUSH_METHODS
+    caller = get_telemetry_server(token.strip()) if is_push else get_agent_cluster(token.strip())
+    if not caller:
         request_ip = getattr(frappe.local, "request_ip", None)
         throttle(f"address:{request_ip or 'unknown'}")  # guessing secrets is paced like everything else
         raise frappe.AuthenticationError(_("Telemetry authentication failed."))
@@ -59,15 +67,18 @@ def authenticate() -> None:
     form_dict = frappe.local.form_dict
     frappe.set_user(TELEMETRY_USER)
     frappe.local.form_dict = form_dict  # set_user clears the request body Frappe already parsed
-    frappe.local.agent_cluster = cluster
+    if is_push:
+        frappe.local.telemetry_server = caller
+    else:
+        frappe.local.agent_cluster = caller
 
 
 def get_agent_cluster(token: str) -> str | None:
     """The cluster whose Agent Key and Agent Secret make up ``<key>:<secret>``, while telemetry is
     on; None for anything else."""
 
-    key, separator, secret = token.partition(":")
-    if not (separator and key and secret and cint(get_config("enable_telemetry"))):
+    key, secret = split_token(token)
+    if not key:
         return None
     cluster = frappe.db.get_value("Stalwart Cluster", {"agent_key": key}, "name")
     stored = cluster and get_decrypted_password(
@@ -76,6 +87,30 @@ def get_agent_cluster(token: str) -> str | None:
     if not stored or not secrets.compare_digest(stored, secret):
         return None
     return cluster
+
+
+def get_telemetry_server(token: str) -> frappe._dict | None:
+    """The Stalwart Node or Egress Gateway whose telemetry key and secret make up
+    ``<key>:<secret>``, while telemetry is on; None for anything else."""
+
+    key, secret = split_token(token)
+    if not key:
+        return None
+    for doctype in SERVER_DOCTYPES:
+        fields = ["name", "ipv4_address", "hostname"]
+        if server := frappe.db.get_value(doctype, {"telemetry_key": key}, fields, as_dict=True):
+            stored = get_decrypted_password(doctype, server.name, "telemetry_secret", raise_exception=False)
+            if stored and secrets.compare_digest(stored, secret):
+                return frappe._dict(server, doctype=doctype)
+            return None
+    return None
+
+
+def split_token(token: str) -> tuple[str | None, str | None]:
+    key, separator, secret = token.partition(":")
+    if not (separator and key and secret and cint(get_config("enable_telemetry"))):
+        return None, None
+    return key, secret
 
 
 def telemetry_api(fn: Callable) -> Callable:
@@ -93,91 +128,94 @@ def telemetry_api(fn: Callable) -> Callable:
     return wrapper
 
 
+def push_api(fn: Callable) -> Callable:
+    """Only Stalwart, signed in with a server's telemetry token, may call the method. Each server
+    is throttled with the agent's calls of the same address."""
+
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        server = getattr(frappe.local, "telemetry_server", None)
+        if frappe.session.user != TELEMETRY_USER or not server:
+            frappe.throw(_("Only a Stalwart server may call this method."), frappe.PermissionError)
+        limit = get_limit("agent_requests_per_minute", DEFAULT_REQUESTS_PER_MINUTE)
+        throttle(f"agent:{server.ipv4_address}", limit)
+        assert_arguments(fn, args, kwargs)
+        return fn(*args, **kwargs)
+
+    wrapper.is_telemetry_api = True
+    return wrapper
+
+
 @frappe.whitelist(methods=["POST"])
-@telemetry_api
-def events(
-    source: str, host_ip: str, records: list, hostname: str | None = None, batch_id: str | None = None
-) -> dict:
-    """Stages a batch of log and trace events: ``{timestamp, level, event, span_id?, data?}`` each."""
+@push_api
+def webhook(events: list) -> dict:
+    """Stalwart's WebHook: ``{"events": [{id, createdAt, type, data}]}``, the stream in the URL.
 
-    return accept(EVENTS, parse_event, source, host_ip, records, hostname, batch_id)
+    An event that does not parse is skipped and counted in one Error Log, since a refused request
+    is sent again until Stalwart drops it."""
+
+    stream = frappe.request.args.get("stream")
+    if stream not in STREAM_EVENTS:
+        frappe.throw(_("stream must be one of {0}.").format(", ".join(STREAM_EVENTS)), InvalidInputError)
+    if len(events) > WEBHOOK_EVENT_LIMIT:
+        frappe.throw(
+            _("Send at most {0} events in one request.").format(WEBHOOK_EVENT_LIMIT), InvalidInputError
+        )
+    server = frappe.local.telemetry_server
+    rows, problems = get_event_rows(events, stream)
+    if problems:
+        log_error(
+            f"Telemetry webhook from {server.hostname}: {len(problems)} events skipped",
+            "\n".join(problems[:20]),
+        )
+    if rows:
+        envelope = get_server_envelope(server, get_batch_id(server.name, events))
+        Spool().write(EVENTS, EVENTS.get_batch(envelope, rows), envelope["batch_id"])
+    record_contact(server.ipv4_address)
+    return {"accepted": len(rows), "skipped": len(problems)}
 
 
 @frappe.whitelist(methods=["POST"])
-@telemetry_api
-def metrics(
-    source: str, host_ip: str, records: list, hostname: str | None = None, batch_id: str | None = None
-) -> dict:
-    """Stages a batch of metrics: ``{timestamp, name, type, value, count?, sum?, labels?}`` each."""
+@push_api
+def otlp() -> Response:
+    """Stalwart's OTLP metrics push: an ``ExportMetricsServiceRequest`` in protobuf. Answers 200
+    with an empty body, which Stalwart accepts."""
 
-    return accept(METRICS, parse_metric, source, host_ip, records, hostname, batch_id)
-
-
-def accept(
-    table: TelemetryTable,
-    parse: Callable,
-    source: str,
-    host_ip: str,
-    records: list,
-    hostname: str | None,
-    batch_id: str | None,
-) -> dict:
-    envelope = get_envelope(source, host_ip, hostname, batch_id)
-    rows = [parse(record) for record in get_records(records)]
-    Spool().write(table, table.get_batch(envelope, rows), envelope["batch_id"])
-    record_contact(envelope["host_ip"], frappe.get_request_header("User-Agent"))
-    return {"batch_id": envelope["batch_id"], "accepted": len(rows)}
-
-
-def get_envelope(source: str, host_ip: str, hostname: str | None, batch_id: str | None) -> dict:
-    """What every row of the batch shares, checked; the sending host is throttled by its address."""
-
-    if not isinstance(source, str) or not SOURCE_PATTERN.fullmatch(source):
-        frappe.throw(_("source must be 1 to 64 lowercase letters, digits, - or _."), InvalidInputError)
+    server = frappe.local.telemetry_server
     try:
-        address = ipaddress.ip_address(host_ip)
-    except ValueError:
-        frappe.throw(_("host_ip must be an IPv4 or IPv6 address."), InvalidInputError)
-    hostname = (hostname or "").strip() or None
-    if hostname and len(hostname) > HOSTNAME_LIMIT:
-        frappe.throw(_("hostname must be at most {0} characters.").format(HOSTNAME_LIMIT), InvalidInputError)
-    if batch_id:
-        try:
-            batch_id = str(UUID(str(batch_id)))
-        except ValueError:
-            frappe.throw(_("batch_id must be a UUID."), InvalidInputError)
+        body = frappe.request.get_data()
+        rows, skipped = get_metric_rows(body)
+    except DecodeError:
+        frappe.throw(_("The body is not an OTLP metrics request."), InvalidInputError)
+    if skipped:
+        log_error(f"Telemetry metrics from {server.hostname}: {skipped} data points skipped", "")
+    if rows:
+        envelope = get_server_envelope(server, get_metrics_batch_id(server.name, body))
+        Spool().write(METRICS, METRICS.get_batch(envelope, rows), envelope["batch_id"])
+    record_contact(server.ipv4_address)
+    return Response(status=200)  # an empty ExportMetricsServiceResponse
 
-    throttle(f"agent:{address}", get_limit("agent_requests_per_minute", DEFAULT_REQUESTS_PER_MINUTE))
-    assert_cluster_server(str(address))
+
+def get_server_envelope(server: frappe._dict, batch_id: str) -> dict:
+    """What every row shares; the server record says who sent it, never the request."""
+
     return {
-        "batch_id": batch_id or str(uuid7()),
+        "batch_id": batch_id,
         "received_at": datetime.now(UTC).replace(tzinfo=None),
-        "source": source,
-        "host_ip": str(address),
-        "hostname": hostname,
+        "source": SOURCE,
+        "host_ip": server.ipv4_address,
+        "hostname": server.hostname,
     }
-
-
-def assert_cluster_server(address: str) -> None:
-    """A batch speaks for one of the caller's cluster's own nodes or gateways, whatever their status."""
-
-    cluster = frappe.local.agent_cluster
-    for doctype in SERVER_DOCTYPES:
-        if frappe.db.exists(doctype, {"cluster": cluster, "ipv4_address": address}):
-            return
-    frappe.throw(
-        _("host_ip {0} is not a node or gateway of the Agent's cluster.").format(address),
-        frappe.PermissionError,
-    )
 
 
 def get_records(records: list) -> list[Record]:
     if not records:
         frappe.throw(_("records must hold at least one record."), InvalidInputError)
-    limit = get_limit("agent_records_per_request", DEFAULT_RECORDS_PER_REQUEST)
-    if len(records) > limit:
+    if len(records) > RECORDS_PER_REQUEST:
         frappe.throw(
-            _("records holds {0} records; send at most {1} in one request.").format(len(records), limit),
+            _("records holds {0} records; send at most {1} in one request.").format(
+                len(records), RECORDS_PER_REQUEST
+            ),
             InvalidInputError,
         )
     return [Record(index, record) for index, record in enumerate(records)]
@@ -187,28 +225,6 @@ def get_limit(key: str, default: int) -> int:
     """A limit from the settings; a site that has not filled the field yet gets the default."""
 
     return cint(get_config(key)) or default
-
-
-def parse_event(record: Record) -> dict:
-    return {
-        "timestamp": record.timestamp("timestamp"),
-        "level": record.text("level", required=True, limit=16),
-        "event": record.text("event", required=True, limit=128),
-        "span_id": record.text("span_id", limit=64),
-        "data": record.json_object("data"),
-    }
-
-
-def parse_metric(record: Record) -> dict:
-    return {
-        "timestamp": record.timestamp("timestamp"),
-        "name": record.text("name", required=True, limit=128),
-        "type": record.text("type", required=True, choices=METRIC_TYPES),
-        "value": record.number("value", required=True),
-        "count": record.number("count", integer=True),
-        "sum": record.number("sum"),
-        "labels": record.json_object("labels"),
-    }
 
 
 class Record:
@@ -242,18 +258,6 @@ class Record:
             self.refuse(key, _("must be one of {0}").format(", ".join(choices)))
         return value
 
-    def timestamp(self, key: str) -> datetime:
-        """An RFC 3339 instant with its offset, stored as naive UTC."""
-
-        value = self.fields.get(key)
-        try:
-            moment = datetime.fromisoformat(value)
-        except (TypeError, ValueError):
-            self.refuse(key, _("must be an RFC 3339 timestamp"))
-        if moment.tzinfo is None:
-            self.refuse(key, _("must carry a UTC offset"))
-        return moment.astimezone(UTC).replace(tzinfo=None)
-
     def number(self, key: str, required: bool = False, integer: bool = False) -> int | float | None:
         value = self.fields.get(key)
         if value is None:
@@ -271,11 +275,3 @@ class Record:
         if not integer and not math.isfinite(number):
             self.refuse(key, _("must be a finite number"))
         return number
-
-    def json_object(self, key: str) -> str | None:
-        value = self.fields.get(key)
-        if value is None:
-            return None
-        if not isinstance(value, dict):
-            self.refuse(key, _("must be an object"))
-        return orjson.dumps(value).decode()  # a tenth of the standard encoder's time per record

@@ -260,23 +260,17 @@ class TestStalwartClient(UnitTestCase):
         self.assertEqual(self.fake.singletons["SpamSettings"], rules)
 
     def test_metrics_exporter_is_updated_as_a_singleton(self) -> None:
-        from suite_cloud.mail.cluster.plan import _drifted, metrics_operation
+        from suite_cloud.mail.cluster.plan import _drifted
 
-        operation = metrics_operation("pw")
+        operation = {"@type": "update", "object": "Metrics", "value": {"prometheus": {"@type": "Disabled"}}}
         first = self.client.apply([operation])
         self.assertEqual(first.updated, ["Metrics/singleton"])
-        prometheus = self.fake.singletons["Metrics"]["prometheus"]
-        self.assertEqual((prometheus["@type"], prometheus["authUsername"]), ("Enabled", "telemetry"))
+        self.assertEqual(self.fake.singletons["Metrics"]["prometheus"], {"@type": "Disabled"})
 
-        # Stalwart never echoes the secret, so drift looks at the rest: on, and the right user.
-        live = {"prometheus": {"@type": "Enabled", "authUsername": "telemetry"}}
-        self.assertEqual(_drifted("Metrics", live, operation["value"]), [])
-        off = {"prometheus": {"@type": "Disabled"}}
+        on = {"prometheus": {"@type": "Enabled", "authUsername": "telemetry"}}
         self.assertEqual(
-            _drifted("Metrics", off, operation["value"]), [{"object": "Metrics", "property": "prometheus"}]
+            _drifted("Metrics", on, operation["value"]), [{"object": "Metrics", "property": "prometheus"}]
         )
-        self.assertRaises(ValueError, metrics_operation, "")
-        self.assertEqual(metrics_operation("", enabled=False)["value"], {"prometheus": {"@type": "Disabled"}})
 
     def test_plan_apply_resends_secrets_without_counting_them_as_changes(self) -> None:
         plan = [

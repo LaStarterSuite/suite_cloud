@@ -30,8 +30,12 @@
   "admin_username",
   "admin_password",
   "column_break_stalwart",
-  "metrics_password",
   "api_key",
+  "telemetry_section",
+  "telemetry_key",
+  "telemetry_secret",
+  "column_break_telemetry",
+  "telemetry_token_installed",
   "state_section",
   "provisioned_at",
   "column_break_state",
@@ -104,10 +108,10 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval:doc.last_error",
    "fieldname": "error_section",
    "fieldtype": "Section Break",
-   "label": "Last Error",
-   "depends_on": "eval:doc.last_error"
+   "label": "Last Error"
   },
   {
    "description": "Why the last job, check or push failed.",
@@ -141,11 +145,11 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:!doc.ssh_verified",
    "fieldname": "ssh_section",
    "fieldtype": "Section Break",
-   "label": "SSH",
-   "collapsible": 1,
-   "collapsible_depends_on": "eval:!doc.ssh_verified"
+   "label": "SSH"
   },
   {
    "description": "Blank uses the cluster SSH user.",
@@ -179,11 +183,11 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval:doc.__islocal",
    "fieldname": "stalwart_section",
    "fieldtype": "Section Break",
-   "label": "Stalwart",
-   "collapsible": 1,
-   "collapsible_depends_on": "eval:doc.__islocal"
+   "label": "Stalwart"
   },
   {
    "description": "Store for the gateway's queue and settings. Blank creates a local RocksDB store.",
@@ -211,12 +215,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Generated on save. The agent uses it to read Prometheus metrics.",
-   "fieldname": "metrics_password",
-   "fieldtype": "Password",
-   "label": "Metrics Password"
-  },
-  {
    "description": "Token Suite Cloud uses to push configuration. Created when provisioning finishes.",
    "fieldname": "api_key",
    "fieldtype": "Password",
@@ -224,10 +222,45 @@
    "label": "API Key"
   },
   {
+   "collapsible": 1,
+   "fieldname": "telemetry_section",
+   "fieldtype": "Section Break",
+   "label": "Telemetry"
+  },
+  {
+   "description": "Generated on save. Stalwart sends it with its secret, as SUITE_CLOUD_TELEMETRY_TOKEN, on every webhook and metrics push.",
+   "fieldname": "telemetry_key",
+   "fieldtype": "Data",
+   "label": "Telemetry Key",
+   "no_copy": 1,
+   "read_only": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "telemetry_secret",
+   "fieldtype": "Password",
+   "label": "Telemetry Secret",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_telemetry",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "Set once a job wrote the token to stalwart.env and restarted Stalwart.",
+   "fieldname": "telemetry_token_installed",
+   "fieldtype": "Check",
+   "label": "Telemetry Token Installed",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
    "fieldname": "state_section",
    "fieldtype": "Section Break",
-   "label": "Configuration",
-   "collapsible": 1
+   "label": "Configuration"
   },
   {
    "description": "When the last provisioning or upgrade job succeeded.",
@@ -283,7 +316,7 @@
    "link_fieldname": "managed_by"
   }
  ],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Egress Gateway",
@@ -304,10 +337,10 @@
   }
  ],
  "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
- "track_changes": 1,
  "title_field": "title",
- "show_title_field_in_link": 1
+ "track_changes": 1
 }

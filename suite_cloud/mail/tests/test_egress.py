@@ -3,7 +3,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from suite_cloud.mail.cluster import dns, egress, push
+from suite_cloud.mail.cluster import dns, egress, plan, push
 from suite_cloud.mail.stalwart import forget_sessions
 from suite_cloud.mail.stalwart.errors import StalwartError
 from suite_cloud.mail.tests.fake_stalwart import FakeStalwart
@@ -395,21 +395,8 @@ class TestEgress(IntegrationTestCase):
         )
         role = operations["ClusterRole"]["value"]["gateway-role"]
         self.assertEqual(role["name"], "egress")
-        gateway_password = self.gateway.get_password("metrics_password")
-        self.assertEqual(
-            operations["Metrics"]["value"]["prometheus"]["authSecret"]["secret"], gateway_password
-        )
-        self.assertNotEqual(gateway_password, self.cluster.get_password("metrics_password"))
-        # The gateway's exporter follows the cluster's switch.
-        self.cluster.db_set("enable_metrics", 0)
-        try:
-            off = {
-                op["object"]: op
-                for op in egress.gateway_plan(frappe.get_doc("Egress Gateway", self.gateway.name))
-            }
-            self.assertEqual(off["Metrics"]["value"], {"prometheus": {"@type": "Disabled"}})
-        finally:
-            self.cluster.db_set("enable_metrics", 1)
+        self.assertIn("metricsPush", role["tasks"]["taskTypes"])
+        self.assertEqual(operations["Metrics"]["value"]["prometheus"], {"@type": "Disabled"})
         self.assertEqual(role["listeners"], {"@type": "EnableAll"})  # the firewall limits exposure
         # The gateway's own domain: its name, a certificate that also covers every pool hostname,
         # DKIM keys of its own (a domain shared between gateways would publish clashing selectors)
@@ -436,6 +423,9 @@ class TestEgress(IntegrationTestCase):
         variables = egress.build_gateway_variables({"gateway": self.gateway.name})
         self.assertEqual(variables["wait_ports"], [443, 2525])
         self.assertIn("STALWART_ROLE=egress", variables["env_normal"])
+        self.assertIn(f"SUITE_CLOUD_TELEMETRY_TOKEN={self.gateway.telemetry_key}:", variables["env_normal"])
+        self.assertIn("env_normal", variables["__secret_keys__"])
+        self.assertIn(plan.get_telemetry_token(self.gateway), variables["__secret_values__"])
         self.assertIn('"object":"SpamSettings"', variables["defaults_ndjson"])
         self.assertIn('"name":"egress"', variables["defaults_ndjson"])  # the role env_normal names
         self.assertNotIn('"name":"full"', variables["defaults_ndjson"])

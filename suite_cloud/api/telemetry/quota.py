@@ -83,8 +83,8 @@ def usage(host_ip: str, records: list) -> dict:
 
 def get_cluster_for_host(host_ip: str) -> str:
     """The caller's cluster, once ``host_ip`` proves to be one of its Active or Draining nodes; the
-    host is throttled like any telemetry sender. The call is not noted as contact: the Agent status
-    reports the last batch of logs or metrics, which a working limit pull must not stand in for."""
+    host is throttled like any telemetry sender. The call is not noted as contact: the telemetry status
+    reports Stalwart's last push, which a working limit pull must not stand in for."""
 
     try:
         address = str(ipaddress.ip_address(host_ip))

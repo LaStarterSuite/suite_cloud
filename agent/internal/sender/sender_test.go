@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/frappe/suite_cloud/agent/internal/config"
-	"github.com/frappe/suite_cloud/agent/internal/telemetry"
 )
 
 // clock stands in for time: sleeping moves it forward at once and records the wait.
@@ -42,8 +40,8 @@ func (c *clock) Sleep(ctx context.Context, d time.Duration) error {
 }
 
 type request struct {
-	path, auth string
-	body       []byte
+	path, auth, userAgent string
+	body                  []byte
 }
 
 func newServer(t *testing.T, statuses ...int) (*httptest.Server, *[]request) {
@@ -53,7 +51,7 @@ func newServer(t *testing.T, statuses ...int) (*httptest.Server, *[]request) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		requests = append(requests, request{r.URL.Path, r.Header.Get("Authorization"), body})
+		requests = append(requests, request{r.URL.Path, r.Header.Get("Authorization"), r.Header.Get("User-Agent"), body})
 		n := len(requests)
 		mu.Unlock()
 		status := statuses[min(n, len(statuses))-1]
@@ -61,11 +59,10 @@ func newServer(t *testing.T, statuses ...int) (*httptest.Server, *[]request) {
 		switch status {
 		case http.StatusOK:
 			var envelope struct {
-				BatchID string `json:"batch_id"`
-				Records []any  `json:"records"`
+				Records []any `json:"records"`
 			}
 			json.Unmarshal(body, &envelope)
-			fmt.Fprintf(w, `{"data": {"batch_id": %q, "accepted": %d}}`, envelope.BatchID, len(envelope.Records))
+			fmt.Fprintf(w, `{"data": {"accepted": %d}}`, len(envelope.Records))
 		default:
 			fmt.Fprintf(w, `{"errors": [{"type": "SomeError", "message": "status %d"}]}`, status)
 		}
@@ -74,114 +71,13 @@ func newServer(t *testing.T, statuses ...int) (*httptest.Server, *[]request) {
 	return server, &requests
 }
 
-func newSender(t *testing.T, url string, perMinute, maxAttempts int) (*Sender, *clock) {
+func newSender(t *testing.T, url string) (*Sender, *clock) {
 	t.Helper()
 	c := &clock{now: time.Date(2026, 10, 20, 12, 0, 30, 0, time.UTC)}
-	s := New(config.SuiteCloud{URL: url + "/", Secret: "s3cret", RequestsPerMinute: perMinute, RecordsPerRequest: 5000, MaxAttempts: maxAttempts, RequestTimeoutSeconds: 5}, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	s.now, s.sleep = c.Now, c.Sleep
+	s := New(config.SuiteCloud{URL: url + "/", Secret: "s3cret", RequestsPerMinute: 300, RequestTimeoutSeconds: 5}, "test")
+	s.now = c.Now
 	s.limiter.now, s.limiter.sleep = c.Now, c.Sleep
 	return s, c
-}
-
-func batch() telemetry.Batch {
-	return telemetry.Batch{ID: "0199f7e0-0000-7000-8000-000000000001", Kind: telemetry.Events, Source: "stalwart", HostIP: "203.0.113.5", Records: []any{telemetry.Event{Timestamp: "2026-10-20T00:00:00Z", Level: "info", Event: "a.b"}}}
-}
-
-func TestSentOnFirstTry(t *testing.T) {
-	server, requests := newServer(t, 200)
-	s, _ := newSender(t, server.URL, 300, 8)
-	outcome, err := s.Send(context.Background(), batch())
-	if err != nil || outcome != telemetry.Sent {
-		t.Fatalf("%v %v", outcome, err)
-	}
-	r := (*requests)[0]
-	if r.path != "/api/v2/method/suite_cloud.api.telemetry.events" || r.auth != "Bearer s3cret" {
-		t.Fatalf("request %+v", r)
-	}
-}
-
-func TestRateLimitedRetryKeepsTheBatchId(t *testing.T) {
-	server, requests := newServer(t, 429, 200)
-	s, c := newSender(t, server.URL, 300, 8)
-	outcome, err := s.Send(context.Background(), batch())
-	if err != nil || outcome != telemetry.Sent {
-		t.Fatalf("%v %v", outcome, err)
-	}
-	if len(*requests) != 2 || string((*requests)[0].body) != string((*requests)[1].body) {
-		t.Fatalf("requests %+v", *requests)
-	}
-	if len(c.waits) != 1 || c.waits[0] < 31*time.Second || c.waits[0] > 36*time.Second {
-		t.Fatalf("waited %v, want until the next minute", c.waits)
-	}
-}
-
-func TestServerErrorsAreGivenUpAfterMaxAttempts(t *testing.T) {
-	server, requests := newServer(t, 500)
-	s, c := newSender(t, server.URL, 300, 4)
-	outcome, err := s.Send(context.Background(), batch())
-	if err != nil || outcome != telemetry.Skipped {
-		t.Fatalf("%v %v", outcome, err)
-	}
-	if len(*requests) != 4 || len(c.waits) != 3 {
-		t.Fatalf("%d requests, waits %v", len(*requests), c.waits)
-	}
-	for i := 1; i < len(c.waits); i++ {
-		if c.waits[i] < c.waits[i-1] {
-			t.Fatalf("waits do not grow: %v", c.waits)
-		}
-	}
-}
-
-func TestServerErrorThenSuccess(t *testing.T) {
-	server, requests := newServer(t, 503, 502, 200)
-	s, _ := newSender(t, server.URL, 300, 8)
-	outcome, _ := s.Send(context.Background(), batch())
-	if outcome != telemetry.Sent || len(*requests) != 3 {
-		t.Fatalf("%v after %d requests", outcome, len(*requests))
-	}
-}
-
-func TestBadRequestIsSkippedAtOnce(t *testing.T) {
-	for _, status := range []int{400, 417, 404} {
-		server, requests := newServer(t, status)
-		s, _ := newSender(t, server.URL, 300, 8)
-		outcome, _ := s.Send(context.Background(), batch())
-		if outcome != telemetry.Skipped || len(*requests) != 1 {
-			t.Fatalf("%d: %v after %d requests", status, outcome, len(*requests))
-		}
-	}
-}
-
-func TestRefusedSecretHoldsUntilCancelled(t *testing.T) {
-	server, requests := newServer(t, 401)
-	s, c := newSender(t, server.URL, 300, 2)
-	ctx, cancel := context.WithCancel(context.Background())
-	stop := 0
-	s.sleep = func(ctx context.Context, d time.Duration) error {
-		stop++
-		if stop == 6 {
-			cancel()
-		}
-		return c.Sleep(ctx, d)
-	}
-	_, err := s.Send(ctx, batch())
-	if err == nil {
-		t.Fatal("returned without the context ending")
-	}
-	if len(*requests) != 6 {
-		t.Fatalf("%d requests: a refused secret must keep retrying", len(*requests))
-	}
-}
-
-func TestNetworkErrorsRetryThenSkip(t *testing.T) {
-	server, _ := newServer(t, 200)
-	url := server.URL
-	server.Close()
-	s, c := newSender(t, url, 300, 3)
-	outcome, _ := s.Send(context.Background(), batch())
-	if outcome != telemetry.Skipped || len(c.waits) != 2 {
-		t.Fatalf("%v waits %v", outcome, c.waits)
-	}
 }
 
 func TestLimiterSharesOneMinuteWindow(t *testing.T) {
@@ -258,7 +154,7 @@ func TestErrorMessage(t *testing.T) {
 
 func TestCallDecodesTheAnswerData(t *testing.T) {
 	server, requests := newServer(t, 200)
-	s, _ := newSender(t, server.URL, 300, 8)
+	s, _ := newSender(t, server.URL)
 	var answer struct {
 		Accepted int `json:"accepted"`
 	}
@@ -267,7 +163,7 @@ func TestCallDecodesTheAnswerData(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := (*requests)[0]
-	if r.path != "/api/v2/method/suite_cloud.api.telemetry.quota.usage" || r.auth != "Bearer s3cret" || answer.Accepted != 2 {
+	if r.path != "/api/v2/method/suite_cloud.api.telemetry.quota.usage" || r.auth != "Bearer s3cret" || r.userAgent != "suite-cloud-agent/test" || answer.Accepted != 2 {
 		t.Fatalf("request %+v answer %+v", r, answer)
 	}
 }
@@ -275,12 +171,26 @@ func TestCallDecodesTheAnswerData(t *testing.T) {
 func TestCallMakesOneAttempt(t *testing.T) {
 	for _, status := range []int{400, 429, 500} {
 		server, requests := newServer(t, status, 200)
-		s, _ := newSender(t, server.URL, 300, 8)
+		s, _ := newSender(t, server.URL)
 		if err := s.Call(context.Background(), "quota.limits", map[string]any{}, &struct{}{}); err == nil {
 			t.Fatalf("status %d accepted", status)
 		}
 		if len(*requests) != 1 {
 			t.Fatalf("status %d: %d requests", status, len(*requests))
 		}
+	}
+}
+
+func TestRateLimitedCallHoldsTheNextUntilTheNextMinute(t *testing.T) {
+	server, requests := newServer(t, 429, 200)
+	s, c := newSender(t, server.URL)
+	if err := s.Call(context.Background(), "quota.limits", map[string]any{}, &struct{}{}); err == nil {
+		t.Fatal("429 accepted")
+	}
+	if err := s.Call(context.Background(), "quota.limits", map[string]any{}, &struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*requests) != 2 || len(c.waits) != 1 || c.waits[0] < 31*time.Second || c.waits[0] > 36*time.Second {
+		t.Fatalf("%d requests, waited %v, want until the next minute", len(*requests), c.waits)
 	}
 }

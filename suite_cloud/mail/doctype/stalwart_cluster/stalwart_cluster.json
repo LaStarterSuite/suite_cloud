@@ -52,10 +52,6 @@
   "agent_key",
   "column_break_agent",
   "agent_secret",
-  "metrics_section",
-  "enable_metrics",
-  "column_break_metrics",
-  "metrics_password",
   "egress_tab",
   "egress_section",
   "default_egress_pool",
@@ -382,28 +378,6 @@
    "read_only": 1
   },
   {
-   "fieldname": "metrics_section",
-   "fieldtype": "Section Break",
-   "label": "Prometheus Metrics"
-  },
-  {
-   "default": "1",
-   "description": "Serve Stalwart metrics to the agent. Off, the agent sends host metrics only.",
-   "fieldname": "enable_metrics",
-   "fieldtype": "Check",
-   "label": "Enable Prometheus Metrics"
-  },
-  {
-   "fieldname": "column_break_metrics",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Generated on save.",
-   "fieldname": "metrics_password",
-   "fieldtype": "Password",
-   "label": "Metrics Password"
-  },
-  {
    "fieldname": "egress_tab",
    "fieldtype": "Tab Break",
    "label": "Sending"
@@ -576,7 +550,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-02 16:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

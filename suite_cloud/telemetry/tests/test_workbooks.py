@@ -18,7 +18,7 @@ class TestShippedWorkbooks(unittest.TestCase):
         """A gauge sampled every minute shows one point per day when bucketed by day; the host
         and Stalwart metric lines bucket by hour, with room for a week of points per host."""
 
-        for workbook in ("stalwart", "machines"):
+        for workbook in ("stalwart",):
             for name, chart in shipped_workbook(workbook)["charts"].items():
                 x_axis = chart["config"].get("x_axis", {}).get("dimension", {})
                 if x_axis.get("column_name") != "timestamp" or "metrics" not in chart["query"]:
@@ -31,7 +31,7 @@ class TestShippedWorkbooks(unittest.TestCase):
     def test_every_dashboard_opens_on_a_bounded_date_range(self) -> None:
         """Without a default every chart reads the whole retention on the first load."""
 
-        for workbook in ("stalwart", "machines"):
+        for workbook in ("stalwart",):
             for name, dashboard in shipped_workbook(workbook)["dashboards"].items():
                 for item in dashboard["items"]:
                     if item["type"] == "filter" and item["filter_type"] == "Date":

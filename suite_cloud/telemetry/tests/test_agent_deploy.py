@@ -6,7 +6,8 @@ import frappe
 from suite_cloud.mail.cluster import bootstrap, egress
 from suite_cloud.mail.tests.fixtures import configure_settings, error_log_count, make_cluster, make_node
 from suite_cloud.provisioning.ansible import playbook_task_names
-from suite_cloud.telemetry.agent import build, deploy, status
+from suite_cloud.telemetry import status
+from suite_cloud.telemetry.agent import build, deploy
 from suite_cloud.telemetry.agent.build import AgentBuild
 from suite_cloud.telemetry.tests.test_agent import AgentBuildFixture
 from suite_cloud.utils import clear_config_cache
@@ -48,57 +49,26 @@ class TestAgentDeploy(AgentBuildFixture):
         self.with_build.start()
         self.addCleanup(self.with_build.stop)
 
-    def test_agent_config_for_a_node_a_gateway_and_an_outbound_node(self) -> None:
+    def test_the_agent_config_holds_the_sending_limits_only(self) -> None:
         config = deploy.agent_config(self.node)
-        self.assertEqual(config["suite_cloud"]["url"], "https://cloud.example.test")
-        self.assertEqual(config["suite_cloud"]["secret"], self.cluster.agent_token)
+        self.assertEqual(
+            config["suite_cloud"],
+            {
+                "url": "https://cloud.example.test",
+                "secret": self.cluster.agent_token,
+                "requests_per_minute": 300,
+            },
+        )
         self.assertRegex(config["suite_cloud"]["secret"], r"^[0-9a-f]{20}:[0-9a-f]{40}$")
-        self.assertEqual(
-            (config["suite_cloud"]["requests_per_minute"], config["suite_cloud"]["records_per_request"]),
-            (300, 5000),
-        )
-        self.assertEqual(config["suite_cloud"]["max_attempts"], 8)
-        self.assertEqual(
-            config["node"],
-            {"source": "stalwart", "host_ip": self.node.ipv4_address, "hostname": self.node.hostname},
-        )
-        self.assertEqual(config["logs"][0]["path"], "/var/log/stalwart/stalwart.*")
-        self.assertEqual(
-            (config["logs"][0]["ship_existing"], config["logs"][0]["delete_after_days"]), (False, 0)
-        )
-        self.assertEqual(config["metrics"]["interval_seconds"], 60)
-        stalwart = config["metrics"]["stalwart"]
-        self.assertEqual(stalwart["url"], "https://127.0.0.1:443/metrics/prometheus")
-        self.assertEqual(
-            (stalwart["username"], stalwart["tls_server_name"]), ("telemetry", self.node.hostname)
-        )
-        self.assertEqual(stalwart["password"], self.cluster.get_password("metrics_password"))
-        self.assertTrue(stalwart["verify_tls"])
-
-        gateway_config = deploy.agent_config(self.gateway)
-        self.assertEqual(gateway_config["node"]["host_ip"], "203.0.113.50")
-        self.assertEqual(
-            gateway_config["metrics"]["stalwart"]["password"], self.gateway.get_password("metrics_password")
-        )
-
-        outbound = make_node(self.cluster, ipv4="203.0.113.11", role="outbound")
-        self.assertNotIn("stalwart", deploy.agent_config(outbound)["metrics"])
-
-        # The cluster's switch turns the scrape off for its nodes and gateways alike.
-        self.cluster.db_set("enable_metrics", 0)
-        try:
-            for server in (self.node, self.gateway):
-                self.assertNotIn(
-                    "stalwart", deploy.agent_config(frappe.get_doc(server.doctype, server.name))["metrics"]
-                )
-        finally:
-            self.cluster.db_set("enable_metrics", 1)
+        self.assertEqual(config["node"], {"host_ip": self.node.ipv4_address, "hostname": self.node.hostname})
+        self.assertFalse({"logs", "metrics"} & set(config))
+        self.assertNotIn("ReadWritePaths", deploy.systemd_unit())
 
     def test_agent_variables_follow_the_settings_and_the_build(self) -> None:
-        self.assertFalse(deploy.agent_variables(self.node)["agent_enabled"])  # no build yet
+        self.assertFalse(deploy.agent_variables(self.node, {})["agent_enabled"])  # no build yet
         version = self.build().run()
 
-        variables = deploy.agent_variables(self.node)
+        variables = deploy.agent_variables(self.node, {})
         self.assertTrue(variables["agent_enabled"])
         self.assertEqual(variables["agent_version"], version)
         self.assertEqual(
@@ -107,25 +77,26 @@ class TestAgentDeploy(AgentBuildFixture):
         )
         self.assertIn('"host_ip": "203.0.113.10"', variables["agent_config_json"])
         self.assertIn("User=stalwart", variables["agent_systemd_unit"])
-        self.assertFalse(variables["agent_restart"])
-        self.assertTrue(deploy.agent_variables(self.node, restart=True)["agent_restart"])
-        self.assertIn(self.cluster.agent_token, variables["__secret_values__"])
-        self.assertIn(self.cluster.get_password("metrics_password"), variables["__secret_values__"])
+        self.assertEqual((variables["agent_restart"], variables["restart_stalwart"]), (False, False))
+        self.assertTrue(deploy.agent_variables(self.node, {"agent_restart": True})["agent_restart"])
+        self.assertEqual(variables["__secret_values__"], [self.cluster.agent_token])
+
+        # A gateway runs no agent: it has no sending limits.
+        self.assertFalse(deploy.agent_variables(self.gateway, {})["agent_enabled"])
+        self.assertTrue(deploy.agent_variables(self.node, {"restart_stalwart": True})["restart_stalwart"])
 
         # Sources change before the next build finishes: the nodes keep getting the last build.
         (self.source / "cmd" / "main.go").write_text("package main\n\nfunc main() {}\n")
         self.assertNotEqual(self.build().version, version)
-        self.assertEqual(deploy.agent_variables(self.node)["agent_version"], version)
-        with patch("suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"):
-            self.assertIn(version, deploy.install_agent(self.node).title)
+        self.assertEqual(deploy.agent_variables(self.node, {})["agent_version"], version)
 
-        # Off: the Agents stop, and each active cluster gets a push that switches the hook off.
+        # Off: the Agents stop, and each active cluster gets a push that switches the push off.
         self.cluster.db_set("status", "Active")
         settings = frappe.get_single("Suite Cloud Settings")
         settings.enable_telemetry = 0
         settings.save()
         clear_config_cache()
-        self.assertFalse(deploy.agent_variables(self.node)["agent_enabled"])
+        self.assertFalse(deploy.agent_variables(self.node, {})["agent_enabled"])
         with (
             patch("suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"),
             patch.object(deploy.push, "resync_cluster_after_commit") as resync,
@@ -151,7 +122,7 @@ class TestAgentDeploy(AgentBuildFixture):
         outbound = make_node(self.cluster, ipv4="203.0.113.11", role="outbound")
         self.assertNotIn("quota", deploy.agent_config(outbound))
 
-        secrets = deploy.agent_variables(self.node)["__secret_values__"]
+        secrets = deploy.agent_variables(self.node, {})["__secret_values__"]
         self.assertIn(section["hook_token"], secrets)
         self.assertIn("redis://redis.example.test:6379", secrets)
 
@@ -188,11 +159,11 @@ class TestAgentDeploy(AgentBuildFixture):
             {"redis://s1:26379", "redis://s2:26379", "redis-pw", "sentinel-pw"},
         )
 
-    def test_nodes_and_gateways_show_their_agent_config_with_every_secret_masked(self) -> None:
+    def test_nodes_show_their_agent_config_with_every_secret_masked(self) -> None:
         (self.source / "VERSION").write_text("0.2.0\n")
         self.build().run()
         secrets = deploy.agent_secrets(deploy.agent_config(self.node))
-        self.assertEqual(len(secrets), 4)  # token, metrics password, hook token, Redis URL
+        self.assertEqual(len(secrets), 3)  # token, hook token, Redis URL
 
         shown = self.node.show_agent_config()
         text = json.dumps(shown["config"])
@@ -205,36 +176,33 @@ class TestAgentDeploy(AgentBuildFixture):
         self.assertEqual(config["quota"]["hook_port"], 8095)
         self.assertTrue(shown["telemetry_enabled"])
 
-        # A gateway's config has no quota section, so its secrets are the token and its metrics password.
-        gateway = self.gateway.show_agent_config()["config"]
-        self.assertNotIn("quota", gateway)
-        self.assertEqual(
-            (gateway["suite_cloud"]["secret"], gateway["metrics"]["stalwart"]["password"]), ("***", "***")
-        )
-        self.assertNotIn(self.gateway.get_password("metrics_password"), json.dumps(gateway))
-
         self.assertEqual(
             deploy.mask_config({"url": "redis://:pw@host"}, ["pw"]), {"url": "redis://:***@host"}
         )
         frappe.set_user("Guest")
         self.addCleanup(frappe.set_user, "Administrator")
         self.assertRaises(frappe.PermissionError, self.node.show_agent_config)
-        self.assertRaises(frappe.PermissionError, self.gateway.show_agent_config)
 
-    def test_node_and_gateway_jobs_carry_the_agent_variables_as_secrets(self) -> None:
+    def test_node_and_gateway_jobs_carry_the_token_and_the_agent_as_secrets(self) -> None:
         self.build().run()
-        for variables in (
-            bootstrap.build_node_variables({"node": self.node.name}),
-            egress.build_gateway_variables({"gateway": self.gateway.name}),
-        ):
-            self.assertIn("agent_config_json", variables["__secret_keys__"])
-            self.assertIn(self.cluster.agent_token, variables["__secret_values__"])
-            self.assertTrue(variables["agent_enabled"])
-            self.assertIn(self.cluster.agent_token, variables["agent_config_json"])
+        node = bootstrap.build_node_variables({"node": self.node.name})
+        gateway = egress.build_gateway_variables({"gateway": self.gateway.name})
+        for server, variables in ((self.node, node), (self.gateway, gateway)):
+            self.assertIn("env_normal", variables["__secret_keys__"])
+            token = f"{server.telemetry_key}:{server.get_password('telemetry_secret')}"
+            self.assertIn(f"SUITE_CLOUD_TELEMETRY_TOKEN={token}", variables["env_normal"])
+            self.assertIn(token, variables["__secret_values__"])
+        self.assertIn("agent_config_json", node["__secret_keys__"])
+        self.assertIn(self.cluster.agent_token, node["__secret_values__"])
+        self.assertTrue(node["agent_enabled"])
+        self.assertFalse(gateway["agent_enabled"])  # no sending limits on a gateway
 
         names = playbook_task_names("configure-node.yml")
         self.assertLess(names.index("Install the Stalwart binary"), names.index("Install the agent binary"))
-        self.assertIn("Stop the agent while telemetry is off", playbook_task_names("upgrade-stalwart.yml"))
+        upgrade = playbook_task_names("upgrade-stalwart.yml")
+        self.assertLess(upgrade.index("Write the runtime environment"), upgrade.index("Restart Stalwart"))
+        telemetry = playbook_task_names("install-telemetry.yml")
+        self.assertLess(telemetry.index("Restart Stalwart"), telemetry.index("Install the agent binary"))
 
     def test_install_agent_jobs(self) -> None:
         self.assertRaisesRegex(frappe.ValidationError, "Build Agent", deploy.install_agent, self.node)
@@ -243,19 +211,88 @@ class TestAgentDeploy(AgentBuildFixture):
         with patch("suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"):
             job = deploy.install_agent(self.node)
             self.assertEqual(
-                (job.playbook, job.callback, job.server), ("install-agent.yml", None, self.node.name)
+                (job.playbook, job.callback, job.server),
+                ("install-telemetry.yml", "after_install_agent", self.node.name),
             )
-            self.assertIn(version, job.title)
+            self.assertEqual(job.title, f"Install agent {version} on {self.node.hostname}")
             self.assertEqual(frappe.db.get_value("Stalwart Node", self.node.name, "status"), self.node.status)
             # A reinstall rewrites what differs and restarts the agent whatever its version.
             self.assertTrue(bootstrap.build_node_variables(json.loads(job.context))["agent_restart"])
             self.assertFalse(bootstrap.build_node_variables({"node": self.node.name})["agent_restart"])
 
-            self.node.db_set("status", "Active")
-            self.gateway.db_set("status", "Active")
+    def test_the_last_token_switches_the_push_on(self) -> None:
+        self.build().run()
+        self.cluster.db_set("status", "Active")
+        self.node.db_set("status", "Active")
+        self.gateway.db_set("status", "Active")
+        execute = "suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"
+        cluster_push = (
+            "suite_cloud.mail.doctype.stalwart_cluster.stalwart_cluster.StalwartCluster.push_config"
+        )
+        gateway_push = "suite_cloud.mail.doctype.egress_gateway.egress_gateway.EgressGateway.push_config"
+
+        def titles(names: list[str]) -> set[str]:
+            return {frappe.db.get_value("Server Job", name, "title") for name in names}
+
+        with patch(execute), patch(cluster_push) as pushed, patch(gateway_push) as gateway_pushed:
+            # Upgrade Agents: every server gets its token; the gateway's agent stops.
             jobs = deploy.upgrade_agents(self.cluster)
-            servers = {frappe.db.get_value("Server Job", name, "server") for name in jobs}
-            self.assertEqual(servers, {self.node.name, self.gateway.name})
+            self.assertEqual(
+                titles(jobs),
+                {
+                    f"Install agent {build.AgentBuild.last_built().version} on {self.node.hostname}",
+                    f"Stop agent on {self.gateway.hostname}",
+                },
+            )
+            pushed.assert_not_called()
+
+            before = set(frappe.get_all("Server Job", pluck="name"))
+            self.node.after_install_agent(frappe._dict())
+            self.assertTrue(frappe.db.get_value("Stalwart Node", self.node.name, "telemetry_token_installed"))
+            pushed.assert_called_once()
+            started = set(frappe.get_all("Server Job", pluck="name")) - before
+            self.assertEqual(titles(list(started)), {f"Start telemetry push on {self.node.hostname}"})
+            job = frappe.get_doc("Server Job", started.pop())
+            self.assertTrue(bootstrap.build_node_variables(json.loads(job.context))["restart_stalwart"])
+
+            # A second token for the same cluster changes nothing; the gateway's own switches its push.
+            self.node.after_install_agent(frappe._dict())
+            pushed.assert_called_once()
+            self.gateway.after_install_agent(frappe._dict())
+            gateway_pushed.assert_called_once()
+
+            # Once all have it, Upgrade Agents pushes and restarts again, which also retries a failure.
+            jobs = deploy.upgrade_agents(self.cluster)
+            self.assertEqual(
+                titles(jobs), {f"Start telemetry push on {s.hostname}" for s in (self.node, self.gateway)}
+            )
+
+    def test_a_rotated_telemetry_token_is_written_by_a_job(self) -> None:
+        token = f"{self.node.telemetry_key}:{self.node.get_password('telemetry_secret')}"
+        self.assertIsNone(self.node.rotate_telemetry_token())  # not running: provisioning writes it
+        self.node.db_set("status", "Active")
+        with patch("suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"):
+            job = self.node.rotate_telemetry_token()
+        node = frappe.get_doc("Stalwart Node", self.node.name)
+        self.assertNotEqual(f"{node.telemetry_key}:{node.get_password('telemetry_secret')}", token)
+        self.assertEqual(frappe.db.get_value("Server Job", job, "playbook"), "install-telemetry.yml")
+        frappe.set_user("Guest")
+        self.addCleanup(frappe.set_user, "Administrator")
+        self.assertRaises(frappe.PermissionError, self.gateway.rotate_telemetry_token)
+
+    def test_the_patch_fills_missing_tokens(self) -> None:
+        from suite_cloud.patches.v1_0 import fill_telemetry_tokens
+
+        self.node.db_set("telemetry_key", None)
+        frappe.db.delete("__Auth", {"doctype": "Stalwart Node", "name": self.node.name})
+        fill_telemetry_tokens.execute()
+        node = frappe.get_doc("Stalwart Node", self.node.name)
+        token = f"{node.telemetry_key}:{node.get_password('telemetry_secret')}"
+        self.assertRegex(token, r"^[0-9a-f]{20}:[0-9a-f]{40}$")
+        fill_telemetry_tokens.execute()  # a second run keeps it
+        self.assertEqual(
+            frappe.db.get_value("Stalwart Node", self.node.name, "telemetry_key"), node.telemetry_key
+        )
 
     def test_a_settings_change_is_rolled_out_once(self) -> None:
         self.node.db_set("status", "Active")
@@ -325,7 +362,9 @@ class TestAgentDeploy(AgentBuildFixture):
         jobs_after(False)
         jobs = jobs_after(True)
         self.assertEqual({job.server for job in jobs}, {s.name for s in servers})
-        self.assertTrue(all(job.title.startswith(f"Install agent {version}") for job in jobs))
+        self.assertEqual(
+            {job.title.split(" on ")[0] for job in jobs}, {f"Install agent {version}", "Stop agent"}
+        )
 
         # A save that leaves the switch as it is changes nothing.
         self.assertEqual(jobs_after(True), [])
@@ -358,36 +397,26 @@ class TestAgentDeploy(AgentBuildFixture):
         move_agent_auth_to_clusters.execute()  # a second run keeps them
         self.assertEqual(frappe.get_doc("Stalwart Cluster", self.cluster.name).agent_token, token)
 
-    def test_agent_status_follows_the_last_batch_and_the_build(self) -> None:
+    def test_the_status_follows_the_last_batch(self) -> None:
         status.forget_contacts()
         self.addCleanup(status.forget_contacts)
-        self.assertEqual(status.agent_status(self.node)["state"], "unknown")
+        self.assertEqual(status.server_status(self.node)["state"], "unknown")
 
-        version = self.build().run()
-        status.record_contact(self.node.ipv4_address, f"suite-cloud-agent/{version}")
-        current = status.agent_status(self.node)
-        self.assertEqual(
-            (current["state"], current["version"], current["built_version"]), ("ok", version, version)
-        )
-        self.assertIn(version, current["message"])
-
-        status.record_contact(self.gateway.ipv4_address, "suite-cloud-agent/0.0.9+00000000")
-        self.assertEqual(status.agent_status(self.gateway)["state"], "outdated")
+        status.record_contact(self.node.ipv4_address)
+        status.record_contact(self.gateway.ipv4_address)
+        self.assertEqual(status.server_status(self.gateway)["state"], "ok")
 
         stale = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2).isoformat()
-        frappe.cache.hset(status.CACHE_KEY, self.node.ipv4_address, {"seen_at": stale, "version": version})
-        self.assertEqual(status.agent_status(self.node)["state"], "silent")
+        frappe.cache.hset(status.CACHE_KEY, self.node.ipv4_address, {"seen_at": stale})
+        self.assertEqual(status.server_status(self.node)["state"], "silent")
 
         self.node.db_set("status", "Active")
         self.gateway.db_set("status", "Active")
-        summary = status.agent_summary(self.cluster)
+        summary = status.cluster_summary(self.cluster)
         self.assertEqual(summary["state"], "silent")
-        self.assertEqual(
-            summary["message"],
-            f"Agents: 1 outdated ({self.gateway.hostname}), 1 silent ({self.node.hostname}).",
-        )
-        self.assertEqual(status.get_agent_status("Stalwart Node", self.node.name)["state"], "silent")
-        self.assertEqual(status.get_agent_summary(self.cluster.name)["state"], "silent")
+        self.assertEqual(summary["message"], f"Telemetry: 1 reporting, 1 silent ({self.node.hostname}).")
+        self.assertEqual(status.get_server_status("Stalwart Node", self.node.name)["state"], "silent")
+        self.assertEqual(status.get_cluster_summary(self.cluster.name)["state"], "silent")
         self.assertRaises(
-            frappe.ValidationError, status.get_agent_status, "Stalwart Cluster", self.cluster.name
+            frappe.ValidationError, status.get_server_status, "Stalwart Cluster", self.cluster.name
         )

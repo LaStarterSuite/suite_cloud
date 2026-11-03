@@ -24,11 +24,13 @@ suite_cloud.patches.v1_0.drop_notification_accounts
 suite_cloud.patches.v1_0.fill_telemetry_retention_default
 suite_cloud.patches.v1_0.rename_telemetry_limits_to_agent
 suite_cloud.patches.v1_0.fill_telemetry_limit_defaults
-suite_cloud.patches.v1_0.fill_agent_defaults
-suite_cloud.patches.v1_0.fill_metrics_passwords
 suite_cloud.patches.v1_0.name_records_with_uuid7
 suite_cloud.patches.v1_0.fill_quota_hook_tokens
 suite_cloud.patches.v1_0.move_agent_auth_to_clusters
 suite_cloud.patches.v1_0.fill_send_usage_retention_default
 suite_cloud.patches.v1_0.fill_send_limit_defaults
 suite_cloud.patches.v1_0.rename_backstop_to_max_daily_send_limit
+suite_cloud.patches.v1_0.fill_telemetry_tokens
+suite_cloud.patches.v1_0.fill_errors_per_hour_default
+suite_cloud.patches.v1_0.delete_agent_telemetry
+suite_cloud.patches.v1_0.drop_agent_telemetry_settings
