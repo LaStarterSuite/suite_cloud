@@ -32,6 +32,7 @@ from suite_cloud.telemetry import (
     ERROR_EVENTS,
     EVENT_LEVELS,
     EVENTS,
+    METRIC_NAMES,
     METRICS,
     TELEMETRY_USER,
     WARN_EVENTS,
@@ -342,7 +343,7 @@ class TestOtlp(PushTestCase):
 class TestEventList(PushTestCase):
     def test_every_event_the_workbook_reads_is_sent_with_its_level(self) -> None:
         self.assertEqual(set(WEBHOOK_EVENTS), set(EVENT_LEVELS))
-        self.assertTrue(set(EVENT_LEVELS.values()) <= {"info", "warn", "error"})
+        self.assertTrue(set(EVENT_LEVELS.values()) <= {"debug", "info", "warn", "error"})
         self.assertIn("server.startup-error", WEBHOOK_EVENTS)
         # Each event is on one WebHook only, so none is sent twice.
         lists = (set(WEBHOOK_EVENTS), set(ERROR_EVENTS), set(WARN_EVENTS))
@@ -350,7 +351,7 @@ class TestEventList(PushTestCase):
 
         workbook = Path(__file__).resolve().parents[1] / "insights_workbook" / "stalwart" / "stalwart.json"
         text = workbook.read_text()
-        metrics = {"server.memory", "smtp.active-connections", "message.size", "user.count", "domain.count"}
+        metrics = set(METRIC_NAMES)
         for name in (
             set(
                 re.findall(

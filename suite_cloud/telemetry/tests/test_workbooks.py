@@ -1,8 +1,9 @@
 import json
+import re
 import unittest
 from pathlib import Path
 
-from suite_cloud.telemetry import EVENT_DATA_COLUMNS
+from suite_cloud.telemetry import EVENT_DATA_COLUMNS, METRIC_NAMES
 
 WORKBOOKS = Path(__file__).resolve().parents[1] / "insights_workbook"
 MAIL_DOCTYPES = Path(__file__).resolve().parents[2] / "mail" / "doctype"
@@ -27,6 +28,48 @@ class TestShippedWorkbooks(unittest.TestCase):
                     self.assertEqual(x_axis.get("granularity"), "hour")
                     self.assertGreaterEqual(chart["config"].get("limit", 0), 1000)
                     self.assertNotIn("per day", chart.get("info") or "")
+
+    def test_filters_sit_side_by_side_from_the_left(self) -> None:
+        for name, dashboard in shipped_workbook("stalwart")["dashboards"].items():
+            layouts = [item["layout"] for item in dashboard["items"] if item["type"] == "filter"]
+            with self.subTest(dashboard=name):
+                self.assertEqual(
+                    sorted(layout["x"] for layout in layouts), [index * 4 for index in range(len(layouts))]
+                )
+
+    def test_line_charts_draw_plain_lines(self) -> None:
+        for name, chart in shipped_workbook("stalwart")["charts"].items():
+            if chart["chart_type"] == "Line":
+                with self.subTest(chart=name):
+                    self.assertFalse(chart["config"]["y_axis"].get("show_area"))
+                    self.assertFalse(chart["config"]["y_axis"].get("stack"))
+
+    def test_every_metric_the_workbook_reads_is_one_stalwart_exports(self) -> None:
+        workbook = shipped_workbook("stalwart")
+        names = set(re.findall(r"metric == '([^']+)'", json.dumps(workbook)))
+        for chart in workbook["charts"].values():
+            for rule in chart["config"].get("filters", {}).get("filters", []):
+                if rule["column"]["column_name"] == "metric" and rule["operator"] == "in":
+                    names.update(rule["value"])
+
+        self.assertEqual(names, set(METRIC_NAMES))
+
+    def test_current_readings_take_the_host_filter_and_leave_the_date_filter_off(self) -> None:
+        """A current value is the newest reading, so a period would only hide it."""
+
+        workbook = shipped_workbook("stalwart")
+        current = {name for name, chart in workbook["charts"].items() if "current" in chart["query"]}
+        for name, dashboard in workbook["dashboards"].items():
+            shown = {item["chart"] for item in dashboard["items"] if item["type"] == "chart"} & current
+            links = {
+                item["filter_name"]: set(item["links"])
+                for item in dashboard["items"]
+                if item["type"] == "filter"
+            }
+            if shown:
+                with self.subTest(dashboard=name):
+                    self.assertFalse(shown & links["Date Range"])
+                    self.assertLessEqual(shown, links["Host"])
 
     def test_every_dashboard_opens_on_a_bounded_date_range(self) -> None:
         """Without a default every chart reads the whole retention on the first load."""

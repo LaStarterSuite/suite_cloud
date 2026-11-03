@@ -14,7 +14,15 @@ import pyarrow.parquet as parquet
 from frappe import _
 from frappe.utils import cint
 
-from suite_cloud.telemetry import DIMENSIONS, MAIL_DOMAINS, NODES, TABLES, TelemetryTable
+from suite_cloud.telemetry import (
+    CURRENT_METRICS,
+    DIMENSIONS,
+    MAIL_DOMAINS,
+    METRICS,
+    NODES,
+    TABLES,
+    TelemetryTable,
+)
 from suite_cloud.telemetry.spool import Spool
 from suite_cloud.utils import get_config, log_exception
 
@@ -22,6 +30,15 @@ DATA_SOURCE = "suite_cloud_telemetry"  # the Insights data source and its file u
 BATCH_FILES = 200  # files loaded under one lock: with 5000 rows each, seconds of hold at most
 DEFAULT_RETENTION_DAYS = 90
 NODE_FIELDS = ("hostname", "cluster", "status", "ipv4_address")
+CURRENT_AFTER = timedelta(minutes=10)  # a node silent for longer drops out of current_metrics
+# The previous point of a metric's series, which the delta columns subtract.
+PREVIOUS_POINT = (
+    "lag(value) OVER series AS previous_value, lag(count) OVER series AS previous_count, "
+    "lag(sum) OVER series AS previous_sum"
+)
+SERIES_WINDOW = "WINDOW series AS (PARTITION BY host_ip, name, labels ORDER BY timestamp)"
+# The host's push before each of its pushes, from one row per push (its host_ip and timestamp).
+PREVIOUS_PUSH = "lag(timestamp) OVER (PARTITION BY host_ip ORDER BY timestamp) AS previous_push"
 
 
 def load_staged_batches() -> None:
@@ -73,7 +90,7 @@ class Warehouse:
         self.register_tables()
 
     def add_derived_columns(self, db, table: TelemetryTable) -> None:
-        """Adds the derived columns a table created before them lacks, filled from its rows.
+        """Adds the derived and delta columns a table created before them lacks, filled from its rows.
 
         One transaction: a failed backfill leaves the table without the columns, so the next
         load tries again.
@@ -86,14 +103,35 @@ class Warehouse:
             ).fetchall()
         }
         missing = [column for column in table.derived if column.name not in existing]
-        if not missing:
+        missing_deltas = [column for column in table.deltas if column.name not in existing]
+        if not missing + missing_deltas:
             return
         db.con.begin()
-        for column in missing:
+        for column in missing + missing_deltas:
             db.con.execute(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type}')
-        assignments = ", ".join(f'"{column.name}" = {column.expression}' for column in missing)
-        db.con.execute(f'UPDATE "{table.name}" SET {assignments}')
+        if missing:
+            assignments = ", ".join(f'"{column.name}" = {column.expression}' for column in missing)
+            db.con.execute(f'UPDATE "{table.name}" SET {assignments}')
+        if missing_deltas:
+            self.fill_deltas(db, table, missing_deltas)
         db.con.commit()
+
+    def fill_deltas(self, db, table: TelemetryTable, columns: list) -> None:
+        """Computes delta columns over the whole table, as the loader computes them per chunk."""
+
+        assignments = ", ".join(f'"{column.name}" = point."{column.name}"' for column in columns)
+        deltas = ", ".join(f'{column.expression} AS "{column.name}"' for column in columns)
+        db.con.execute(f"""
+            WITH pushes AS (SELECT host_ip, timestamp, {PREVIOUS_PUSH} FROM (
+                SELECT DISTINCT host_ip, timestamp FROM "{table.name}"
+            ))
+            UPDATE "{table.name}" SET {assignments}
+            FROM (SELECT row_id, {deltas} FROM (
+                SELECT rowid AS row_id, rows.*, previous_push, {PREVIOUS_POINT}
+                FROM "{table.name}" AS rows JOIN pushes USING (host_ip, timestamp) {SERIES_WINDOW}
+            )) AS point
+            WHERE "{table.name}".rowid = point.row_id
+        """)
 
     def load_pending(self) -> dict[str, int]:
         """Loads every staged file of every table, oldest first; returns the rows added per table.
@@ -121,6 +159,10 @@ class Warehouse:
                     break
                 if len(files) < BATCH_FILES:
                     break
+        try:
+            self.refresh_current_metrics()
+        except Exception:
+            log_exception("Current metrics not refreshed")
         if added:
             self.register_tables()
         return added
@@ -138,7 +180,7 @@ class Warehouse:
             MAIL_DOMAINS: MAIL_DOMAINS.get_batch({}, get_mail_domain_rows()),
         }
         with self.write_connection() as db:
-            for table in TABLES:
+            for table in (*TABLES, CURRENT_METRICS):
                 db.raw_sql(table.create_statement)
                 self.add_derived_columns(db, table)
             for table, batch in batches.items():
@@ -177,15 +219,86 @@ class Warehouse:
         names = [*table.columns, *(column.name for column in table.derived)]
         values = [f'"{column}"' for column in table.columns]
         values += [f'{column.expression} AS "{column.name}"' for column in table.derived]
+        incoming = (
+            f"SELECT {', '.join(values)} FROM read_parquet($files) WHERE batch_id NOT IN "
+            f'(SELECT batch_id FROM "{table.name}" WHERE batch_id IN (SELECT unnest($ids)))'
+        )
         columns = ", ".join(f'"{name}"' for name in names)
+        statement = (
+            self.get_metrics_insert(names, incoming)
+            if table is METRICS
+            else f'INSERT INTO "{table.name}" ({columns}) {incoming}'
+        )
         with self.write_connection() as db:
             result = db.con.execute(
-                f'INSERT INTO "{table.name}" ({columns}) SELECT {", ".join(values)} FROM read_parquet($files) '
-                f'WHERE batch_id NOT IN (SELECT batch_id FROM "{table.name}" WHERE batch_id IN (SELECT unnest($ids)))',
-                {"files": [str(path) for path in files], "ids": [path.stem for path in files]},
+                statement, {"files": [str(path) for path in files], "ids": [path.stem for path in files]}
             ).fetchone()
         self.spool.delete(files)
         return result[0]
+
+    def get_metrics_insert(self, names: list[str], incoming: str) -> str:
+        """The insert of new metric rows with their change since the previous point of the series.
+
+        The stored rows a change can be taken against are the series' newest one before its first
+        incoming row, looked up within a day, and any between its incoming rows, which only a late
+        file has. The host's previous push is its incoming push before, or for its first incoming
+        push its newest stored one within a day. Only the incoming rows are inserted.
+        """
+
+        columns = ", ".join(f'"{name}"' for name in names)
+        stored_columns = ", ".join(f'stored."{name}"' for name in names)
+        delta_names = ", ".join(f'"{column.name}"' for column in METRICS.deltas)
+        deltas = ", ".join(f'{column.expression} AS "{column.name}"' for column in METRICS.deltas)
+        return f"""
+            WITH incoming AS ({incoming}),
+            bounds AS (
+                SELECT host_ip, name, labels, min(timestamp) AS first, max(timestamp) AS last
+                FROM incoming GROUP BY ALL
+            ),
+            stored AS (
+                SELECT {stored_columns} FROM "{METRICS.name}" AS stored JOIN bounds
+                ON stored.host_ip = bounds.host_ip AND stored.name = bounds.name
+                AND stored.labels IS NOT DISTINCT FROM bounds.labels
+                WHERE stored.timestamp < bounds.last
+                AND stored.timestamp >= (SELECT min(first) FROM bounds) - INTERVAL 1 DAY
+                QUALIFY stored.timestamp > bounds.first OR row_number() OVER (
+                    PARTITION BY stored.host_ip, stored.name, stored.labels, stored.timestamp > bounds.first
+                    ORDER BY stored.timestamp DESC
+                ) = 1
+            ),
+            points AS (SELECT *, true AS is_incoming FROM incoming UNION ALL SELECT *, false FROM stored),
+            hosts AS (SELECT host_ip, min(first) AS first FROM bounds GROUP BY ALL),
+            pushes AS (SELECT host_ip, timestamp, {PREVIOUS_PUSH} FROM (
+                SELECT DISTINCT host_ip, timestamp FROM incoming
+                UNION SELECT stored.host_ip, max(stored.timestamp) FROM "{METRICS.name}" AS stored
+                JOIN hosts ON stored.host_ip = hosts.host_ip
+                WHERE stored.timestamp < hosts.first
+                AND stored.timestamp >= (SELECT min(first) FROM hosts) - INTERVAL 1 DAY
+                GROUP BY ALL
+            )),
+            changes AS (
+                SELECT points.*, previous_push, {PREVIOUS_POINT}
+                FROM points LEFT JOIN pushes USING (host_ip, timestamp) {SERIES_WINDOW}
+            )
+            INSERT INTO "{METRICS.name}" ({columns}, {delta_names})
+            SELECT {columns}, {deltas} FROM changes WHERE is_incoming
+        """
+
+    def refresh_current_metrics(self) -> None:
+        """Rewrites current_metrics from the newest gauge readings of the nodes still pushing."""
+
+        since = datetime.now(UTC).replace(tzinfo=None) - CURRENT_AFTER
+        columns = ", ".join(f'"{column}"' for column in CURRENT_METRICS.columns)
+        with self.write_connection() as db:
+            db.con.begin()
+            db.con.execute(f'DELETE FROM "{CURRENT_METRICS.name}"')
+            db.con.execute(
+                f'INSERT INTO "{CURRENT_METRICS.name}" ({columns}) '
+                "SELECT host_ip, hostname, name, labels, arg_max(value, timestamp), max(timestamp) "
+                f"FROM \"{METRICS.name}\" WHERE type = 'gauge' AND timestamp >= $since GROUP BY ALL",
+                {"since": since},
+            )
+            db.con.commit()
 
     def prune_expired(self) -> None:
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=self.retention_days)
@@ -210,7 +323,8 @@ class Warehouse:
 
         from insights.insights.doctype.insights_table_v3.insights_table_v3 import InsightsTablev3
 
-        InsightsTablev3.bulk_create(self.data_source, [table.name for table in TABLES + DIMENSIONS])
+        tables = (*TABLES, *DIMENSIONS, CURRENT_METRICS)
+        InsightsTablev3.bulk_create(self.data_source, [table.name for table in tables])
 
 
 def get_node_rows() -> list[dict]:
