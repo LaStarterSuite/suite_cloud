@@ -13,7 +13,7 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils import get_files_path
 
 from suite_cloud.mail.tests.fixtures import error_log_count, make_cluster, make_node
-from suite_cloud.telemetry import EVENT_DATA_COLUMNS, EVENTS, METRICS, TelemetryTable
+from suite_cloud.telemetry import CURRENT_METRICS, EVENT_DATA_COLUMNS, EVENTS, METRICS, TelemetryTable
 from suite_cloud.telemetry.spool import Spool
 from suite_cloud.telemetry.warehouse import Warehouse
 from suite_cloud.tests.fixtures import configure_settings
@@ -43,6 +43,7 @@ STALWART_COLUMNS = (
 )
 CODE_ONLY_COLUMNS = (None, None, None, None, "550 rejected", "421", None, None, None, None, None, None)
 NO_DATA_COLUMNS = (None,) * len(EVENT_DATA_COLUMNS)
+TABLE_NAMES = {"events", "metrics", "nodes", "mail_domains", "current_metrics"}
 
 
 def event(**fields) -> dict:
@@ -54,6 +55,27 @@ def event(**fields) -> dict:
         "data": None,
         **fields,
     }
+
+
+def minutes(count: int) -> datetime:
+    return NOW - timedelta(minutes=60 - count)
+
+
+def counter(at: int, value: float, **fields) -> dict:
+    return metric(
+        **{"timestamp": minutes(at), "name": "auth.success", "type": "counter", "value": value, **fields}
+    )
+
+
+def histogram(at: int, count: int, total: float) -> dict:
+    return metric(
+        timestamp=minutes(at),
+        name="delivery.total-time",
+        type="histogram",
+        value=total / count,
+        count=count,
+        sum=total,
+    )
 
 
 def metric(**fields) -> dict:
@@ -99,7 +121,7 @@ class TestWarehouse(IntegrationTestCase):
         self.warehouse.ensure_data_source()  # a second migrate changes nothing
 
         self.assertTrue(frappe.db.exists("Insights Data Source v3", self.name))
-        self.assertEqual(self.registered(), {"events", "metrics", "nodes", "mail_domains"})
+        self.assertEqual(self.registered(), TABLE_NAMES)
         self.assertEqual((self.count(EVENTS), self.count(METRICS)), (0, 0))
 
     def test_without_insights_the_setup_fails_in_plain_words(self) -> None:
@@ -113,7 +135,7 @@ class TestWarehouse(IntegrationTestCase):
         with patch.object(Warehouse, "write_connection", side_effect=IOException("Could not set lock")):
             self.warehouse.ensure_data_source()
 
-        self.assertEqual(self.registered(), {"events", "metrics", "nodes", "mail_domains"})
+        self.assertEqual(self.registered(), TABLE_NAMES)
 
     def test_a_load_inserts_every_staged_file_and_deletes_it(self) -> None:
         self.stage(EVENTS, [event(), event(level="warn"), event()])
@@ -169,6 +191,111 @@ class TestWarehouse(IntegrationTestCase):
             return db.con.execute(
                 f'SELECT {names} FROM "{EVENTS.name}" ORDER BY "data" NULLS LAST'
             ).fetchall()
+
+    def deltas(self, name: str, labels: str | None = None) -> list[tuple]:
+        with self.warehouse.write_connection() as db:
+            return db.con.execute(
+                'SELECT increase, samples_added FROM "metrics" WHERE name = $name '
+                "AND labels IS NOT DISTINCT FROM $labels ORDER BY timestamp, host_ip",
+                {"name": name, "labels": labels},
+            ).fetchall()
+
+    def test_a_counter_gets_its_increase_per_point_and_its_own_total_after_a_restart(self) -> None:
+        self.stage(METRICS, [counter(0, 4), counter(1, 6), counter(2, 6), counter(3, 2), counter(4, 5)])
+
+        self.warehouse.load_pending()
+
+        self.assertEqual(
+            self.deltas("auth.success"), [(None, None), (2, None), (0, None), (2, None), (3, None)]
+        )
+
+    def test_a_histogram_gets_its_added_sum_and_samples_and_a_restart_its_own_totals(self) -> None:
+        # The restart at minute 2 kept the count at 3, but the sum fell.
+        points = [histogram(0, 2, 100), histogram(1, 3, 160), histogram(2, 3, 30), histogram(3, 1, 10)]
+        self.stage(METRICS, points)
+
+        self.warehouse.load_pending()
+
+        self.assertEqual(self.deltas("delivery.total-time"), [(None, None), (60, 1), (30, 3), (10, 1)])
+
+    def test_a_series_the_hosts_previous_push_lacked_counts_its_whole_total(self) -> None:
+        """Stalwart pushes a counter or histogram only once it is above zero."""
+
+        self.stage(METRICS, [counter(0, 4)])
+        self.warehouse.load_pending()
+        self.stage(METRICS, [counter(1, 4), histogram(1, 1, 30)])
+        self.stage(METRICS, [counter(2, 4), histogram(2, 1, 30), counter(2, 2, name="queue.message-queued")])
+
+        self.warehouse.load_pending()
+
+        self.assertEqual(self.deltas("delivery.total-time"), [(30, 1), (0, 0)])
+        self.assertEqual(self.deltas("queue.message-queued"), [(2, None)])
+
+    def test_a_gauge_has_no_increase(self) -> None:
+        self.stage(METRICS, [metric(timestamp=minutes(0), value=5), metric(timestamp=minutes(1), value=3)])
+
+        self.warehouse.load_pending()
+
+        self.assertEqual(self.deltas("server.memory"), [(None, None), (None, None)])
+
+    def test_a_series_continues_from_its_stored_points_across_loads(self) -> None:
+        self.stage(METRICS, [counter(0, 4), counter(5, 10)])
+        self.warehouse.load_pending()
+        self.stage(METRICS, [counter(6, 12), counter(7, 15)])
+        self.stage(METRICS, [counter(2, 7)])  # a late file: against minute 0, not minute 7
+
+        self.warehouse.load_pending()
+
+        self.assertEqual([increase for increase, _ in self.deltas("auth.success")], [None, 3, 6, 2, 3])
+
+    def test_series_are_told_apart_by_host_and_labels_even_when_none_are_set(self) -> None:
+        labelled = '{"protocol": "smtp"}'
+        self.stage(METRICS, [counter(0, 1), counter(0, 50, labels=labelled), counter(1, 3)])
+        self.stage(METRICS, [counter(1, 52, labels=labelled), counter(2, 4)])
+        self.spool.write(
+            METRICS,
+            METRICS.get_batch({**ENVELOPE, "host_ip": "203.0.113.6", "batch_id": "other"}, [counter(2, 100)]),
+            "other",
+        )
+
+        self.warehouse.load_pending()
+
+        self.assertEqual([increase for increase, _ in self.deltas("auth.success")], [None, 2, 1, None])
+        self.assertEqual([increase for increase, _ in self.deltas("auth.success", labelled)], [None, 2])
+
+    def test_a_table_from_before_the_delta_columns_gets_them_filled_on_the_next_load(self) -> None:
+        legacy = TelemetryTable(METRICS.name, METRICS.schema)
+        rows = [counter(0, 4), counter(1, 6), histogram(1, 3, 160), histogram(2, 4, 200)]
+        batch = legacy.get_batch({**ENVELOPE, "batch_id": "old"}, rows)
+        with self.warehouse.write_connection() as db:
+            db.con.execute(f'DROP TABLE "{METRICS.name}"')
+            db.raw_sql(legacy.create_statement)
+            db.con.register("batch", batch)
+            db.con.execute(f'INSERT INTO "{METRICS.name}" SELECT * FROM batch')
+        self.stage(METRICS, [counter(2, 9)])
+
+        self.warehouse.load_pending()
+
+        self.assertEqual(self.deltas("auth.success"), [(None, None), (2, None), (3, None)])
+        self.assertEqual(self.deltas("delivery.total-time"), [(160, 3), (40, 1)])
+
+    def test_current_metrics_hold_the_newest_gauge_of_every_node_still_pushing(self) -> None:
+        silent = {**ENVELOPE, "host_ip": "203.0.113.6", "hostname": "n2", "batch_id": "silent"}
+        self.stage(METRICS, [metric(timestamp=minutes(50), value=5), metric(timestamp=minutes(58), value=7)])
+        self.stage(METRICS, [counter(58, 3), metric(timestamp=minutes(58), name="queue.count", value=2)])
+        self.spool.write(
+            METRICS, METRICS.get_batch(silent, [metric(timestamp=minutes(45), value=9)]), "silent"
+        )
+
+        self.warehouse.load_pending()
+
+        with self.warehouse.write_connection() as db:
+            current = db.con.execute(
+                f'SELECT host_ip, hostname, name, value FROM "{CURRENT_METRICS.name}" ORDER BY name'
+            ).fetchall()
+        self.assertEqual(
+            current, [("203.0.113.5", "n1", "queue.count", 2), ("203.0.113.5", "n1", "server.memory", 7)]
+        )
 
     def test_a_file_left_behind_after_its_commit_is_not_loaded_twice(self) -> None:
         self.stage(EVENTS, [event(), event()], batch_id="b1")
@@ -315,7 +442,7 @@ class TestWarehouse(IntegrationTestCase):
             ],
         )
         self.assertEqual(domains, [("acme.frappe.test", tenant.name, "Acme")])
-        self.assertEqual(self.registered(), {"events", "metrics", "nodes", "mail_domains"})
+        self.assertEqual(self.registered(), TABLE_NAMES)
 
     def test_a_retention_under_a_day_falls_back_to_the_default(self) -> None:
         with patch("suite_cloud.telemetry.warehouse.get_config", return_value=-5):

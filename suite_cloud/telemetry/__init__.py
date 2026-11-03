@@ -75,6 +75,8 @@ EVENT_LEVELS = {
         ),
         "info",
     ),
+    # Debug events that carry the DNS times the Community edition leaves out of OTLP.
+    **dict.fromkeys(("delivery.ip-lookup", "delivery.mx-lookup"), "debug"),
     **dict.fromkeys(("auth.too-many-attempts", "smtp.id-not-found"), "warn"),
     **dict.fromkeys(("auth.error", "server.startup-error"), "error"),
 }
@@ -189,6 +191,34 @@ WARN_EVENTS = (
     "tls.no-certificates-available",
 )
 
+# The metrics the Stalwart workbook reads, as Stalwart 0.16 names them (``MetricType`` in its ``trc``
+# crate). Only metrics the Community edition pushes: it leaves out ``queue.count`` and the ingest,
+# indexing, DNS and store timings (``collect_gauges`` and ``collect_histograms``).
+METRIC_NAMES = (
+    "delivery.active-connections",
+    "delivery.attempt-start",
+    "delivery.attempt-time",
+    "delivery.total-time",
+    "domain.count",
+    "http.active-connections",
+    "http.connection-start",
+    "imap.active-connections",
+    "imap.connection-start",
+    "manage-sieve.connection-start",
+    "message.size",
+    "pop3.active-connections",
+    "pop3.connection-start",
+    "queue.authenticated-message-queued",
+    "queue.dsn-queued",
+    "queue.message-queued",
+    "queue.report-queued",
+    "server.memory",
+    "sieve.active-connections",
+    "smtp.active-connections",
+    "smtp.connection-start",
+    "user.count",
+)
+
 DUCKDB_TYPES = {
     pyarrow.string(): "VARCHAR",
     pyarrow.timestamp("us"): "TIMESTAMP",
@@ -220,12 +250,13 @@ class DerivedColumn:
 class TelemetryTable:
     """One kind of telemetry: its DuckDB table, its spool folder and its columns.
 
-    The schema is what a staged batch carries; the derived columns exist only in DuckDB.
+    The schema is what a staged batch carries; the derived and delta columns exist only in DuckDB.
     """
 
     name: str
     schema: pyarrow.Schema
     derived: tuple[DerivedColumn, ...] = ()
+    deltas: tuple[DerivedColumn, ...] = ()
 
     @property
     def columns(self) -> list[str]:
@@ -237,7 +268,7 @@ class TelemetryTable:
             f'"{field.name}" {DUCKDB_TYPES[field.type]}{"" if field.nullable else " NOT NULL"}'
             for field in self.schema
         ]
-        columns += [f'"{column.name}" {column.type}' for column in self.derived]
+        columns += [f'"{column.name}" {column.type}' for column in self.derived + self.deltas]
         return f'CREATE TABLE IF NOT EXISTS "{self.name}" ({", ".join(columns)})'
 
     def get_batch(self, envelope: dict, rows: list[dict]) -> pyarrow.Table:
@@ -291,6 +322,40 @@ EVENTS = TelemetryTable(
     EVENT_DATA_COLUMNS,
 )
 
+
+def get_change(total: str, previous: str, reset: str) -> str:
+    """A running total's change since the previous point of its series.
+
+    The loader reads the previous point beside each row as ``previous_value``, ``previous_count``
+    and ``previous_sum``, and the host's previous push as ``previous_push``. Stalwart pushes a
+    counter or histogram once it is above zero and then on every push, so a series the host's
+    previous push lacked was zero then, and its first total is all new. On a host's first push
+    there is nothing to subtract. A total that fell means Stalwart restarted, and the point's own
+    total is the change.
+    """
+
+    return (
+        f"CASE WHEN previous_value IS NULL AND previous_push IS NULL THEN NULL "
+        f"WHEN previous_value IS NULL OR {reset} THEN {total} ELSE {total} - {previous} END"
+    )
+
+
+HISTOGRAM_RESET = '("count" < previous_count OR "sum" < previous_sum)'
+# Charts sum these instead of the running totals; a gauge gets NULL.
+METRIC_DELTA_COLUMNS = (
+    DerivedColumn(
+        "increase",
+        "DOUBLE",
+        f"CASE type WHEN 'counter' THEN {get_change('value', 'previous_value', 'value < previous_value')} "
+        f"WHEN 'histogram' THEN {get_change('"sum"', 'previous_sum', HISTOGRAM_RESET)} END",
+    ),
+    DerivedColumn(
+        "samples_added",
+        "BIGINT",
+        f"CASE type WHEN 'histogram' THEN {get_change('"count"', 'previous_count', HISTOGRAM_RESET)} END",
+    ),
+)
+
 METRICS = TelemetryTable(
     "metrics",
     pyarrow.schema(
@@ -305,9 +370,26 @@ METRICS = TelemetryTable(
             pyarrow.field("labels", pyarrow.string()),
         ]
     ),
+    deltas=METRIC_DELTA_COLUMNS,
 )
 
 TABLES = (EVENTS, METRICS)
+
+# The newest reading of every gauge of every node that pushed in the last few minutes, rebuilt after
+# each load, so a card sums the nodes' current values instead of every reading in its period.
+CURRENT_METRICS = TelemetryTable(
+    "current_metrics",
+    pyarrow.schema(
+        [
+            pyarrow.field("host_ip", pyarrow.string(), nullable=False),
+            pyarrow.field("hostname", pyarrow.string()),
+            pyarrow.field("name", pyarrow.string(), nullable=False),
+            pyarrow.field("labels", pyarrow.string()),
+            pyarrow.field("value", pyarrow.float64(), nullable=False),
+            pyarrow.field("timestamp", pyarrow.timestamp("us"), nullable=False),
+        ]
+    ),
+)
 
 # Copies of Suite Cloud's own records beside the telemetry, so a dashboard joins on the cluster
 # or the tenant inside one DuckDB instead of across data sources.
