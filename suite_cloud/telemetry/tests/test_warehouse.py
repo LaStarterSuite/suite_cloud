@@ -131,11 +131,22 @@ class TestWarehouse(IntegrationTestCase):
         ):
             Warehouse("telemetry_missing").ensure_data_source()
 
-    def test_a_migrate_does_not_wait_for_the_store_file(self) -> None:
+    def test_a_migrate_creates_every_table_the_workbook_reads_in_a_new_store(self) -> None:
+        Path(get_files_path(f"{self.name}.duckdb", is_private=1)).unlink()
+
+        self.warehouse.ensure_data_source()
+
+        tables = {name for (name,) in self.warehouse.query("SELECT table_name FROM duckdb_tables()", {})}
+        self.assertEqual(tables, TABLE_NAMES)
+
+    def test_a_migrate_the_store_file_is_locked_for_logs_it_and_leaves_the_tables_to_the_load(self) -> None:
+        errors = error_log_count()
+
         with patch.object(Warehouse, "write_connection", side_effect=IOException("Could not set lock")):
             self.warehouse.ensure_data_source()
 
         self.assertEqual(self.registered(), TABLE_NAMES)
+        self.assertEqual(error_log_count(), errors + 1)
 
     def test_a_load_inserts_every_staged_file_and_deletes_it(self) -> None:
         self.stage(EVENTS, [event(), event(level="warn"), event()])

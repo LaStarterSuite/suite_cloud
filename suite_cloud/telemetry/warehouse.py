@@ -69,10 +69,11 @@ class Warehouse:
         return days if days > 0 else DEFAULT_RETENTION_DAYS
 
     def ensure_data_source(self) -> None:
-        """Install and migrate: the Insights data source and its table registration.
+        """Install and migrate: the Insights data source, its tables and their registration.
 
-        The file itself is left to the loader: a dashboard reading it can hold it longer than a
-        migrate should wait.
+        The workbook a migrate ships reads every table, so the migrate creates the ones the file
+        lacks. A dashboard can hold the file past the write lock's timeout; the migrate then logs
+        it and goes on, and the next load creates them.
         """
 
         if "insights" not in frappe.get_installed_apps():
@@ -87,6 +88,11 @@ class Warehouse:
                     "database_name": self.data_source,
                 }
             ).insert(ignore_permissions=True)
+        try:
+            self.refresh_tables()
+            self.refresh_current_metrics()
+        except Exception:
+            log_exception("Telemetry tables not refreshed")
         self.register_tables()
 
     def add_derived_columns(self, db, table: TelemetryTable) -> None:
