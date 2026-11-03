@@ -1,15 +1,21 @@
-"""Sending limits: the Agents pull them per cluster, push what they counted, and the cluster plan
-carries the hook and its backstop once the Agents can answer it."""
+"""Sending limits: Stalwart's RCPT hook asks Suite Cloud for each recipient, the counters live in
+Redis and are flushed to Mail Send Usage, and the cluster plan carries the hook and its backstop."""
 
+import contextvars
+import json
+import threading
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import frappe
-from frappe.utils import now_datetime
+import redis
+from frappe.utils import get_test_client
 
+from suite_cloud.api import sending_limits as sending_limits_api
 from suite_cloud.api.mail import accounts, domains
-from suite_cloud.api.telemetry import quota as quota_api
-from suite_cloud.api.tenant import InvalidInputError, SendLimitsNotAllowedError
+from suite_cloud.api.telemetry import authenticate
+from suite_cloud.api.tenant import SendLimitsNotAllowedError
+from suite_cloud.mail import sending_limits
 from suite_cloud.mail.cluster import plan, push, quota
 from suite_cloud.mail.doctype.mail_send_usage import mail_send_usage
 from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import (
@@ -24,17 +30,18 @@ from suite_cloud.mail.tests.test_tenant_api import TenantApiTestCase
 from suite_cloud.patches.v1_0 import (
     fill_quota_hook_tokens,
     fill_send_limit_defaults,
+    move_sending_limits_to_suite_cloud,
     rename_backstop_to_max_daily_send_limit,
 )
-from suite_cloud.telemetry import TELEMETRY_USER
-from suite_cloud.telemetry.status import CACHE_KEY
-from suite_cloud.tests.fixtures import ROOT_DOMAIN
+from suite_cloud.telemetry import TELEMETRY_USER, install
+from suite_cloud.tests.fixtures import ROOT_DOMAIN, configure_settings, production_logging
 
-NODE_IP = "203.0.113.10"
+HOOK = "/api/v2/method/suite_cloud.api.sending_limits.check"
+EXECUTE = "suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"
 
 
 def frozen_clock(moment: datetime) -> type[datetime]:
-    """``datetime`` with ``now()`` fixed at ``moment``, for the usage module."""
+    """``datetime`` with ``now()`` fixed at ``moment``, for the usage and counter modules."""
 
     class Frozen(datetime):
         @classmethod
@@ -42,6 +49,20 @@ def frozen_clock(moment: datetime) -> type[datetime]:
             return moment.astimezone(tz)
 
     return Frozen
+
+
+def clear_keys(cluster: str) -> None:
+    """The test accounts' keys, the touched sets and the test cluster's token: the dev site may
+    count real mail under the same prefix."""
+
+    client = sending_limits.get_client()
+    for pattern in (
+        "sending_limits:*@acme.com*",
+        "sending_limits:touched*",
+        f"sending_limits:token:{cluster}",
+    ):
+        for key in client.scan_iter(match=sending_limits.make_key(pattern)):
+            client.delete(key)
 
 
 class SendingLimitsTestCase(TenantApiTestCase):
@@ -53,147 +74,386 @@ class SendingLimitsTestCase(TenantApiTestCase):
         self.act_as(self.tenant)
         for name in ("alice", "bob", "carol"):
             accounts.create_account(f"{name}@acme.com", "secret-pw", daily_send_limit=100)
-        frappe.set_user("Administrator")
-        self.node = make_node(self.cluster, ipv4=NODE_IP)
-        self.node.db_set("status", "Active")
-        self.act_as(self.tenant)
-        settle = patch.object(quota_api, "SETTLE_SECONDS", 0)
-        settle.start()
-        self.addCleanup(settle.stop)
         # One moment for the test and the code, so a run across midnight UTC sees one day.
         self.now = datetime.now(UTC)
-        clock = patch.object(mail_send_usage, "datetime", frozen_clock(self.now))
-        clock.start()
-        self.addCleanup(clock.stop)
+        for module in (mail_send_usage, sending_limits):
+            clock = patch.object(module, "datetime", frozen_clock(self.now))
+            clock.start()
+            self.addCleanup(clock.stop)
+        clear_keys(self.cluster.name)
+        self.addCleanup(clear_keys, self.cluster.name)
+        self.token = self.cluster.get_password("quota_hook_token")
+        frappe.set_user("Administrator")
 
     def tearDown(self) -> None:
-        frappe.local.agent_cluster = None
+        frappe.local.hook_cluster = None
         frappe.db.delete("Mail Send Usage", {"account": ("like", "%@acme.com")})
         super().tearDown()
 
-    def as_agent(self, cluster: str | None = None) -> None:
-        """As the auth hook leaves a request its cluster's credentials signed in."""
+    def sign_in(self, token: str | None = None, cluster: str | None = None) -> None:
+        """A hook request as the auth hook sees it; an empty ``cluster`` leaves it out of the URL."""
 
-        frappe.set_user(TELEMETRY_USER)
-        frappe.local.agent_cluster = cluster or self.cluster.name
-        frappe.utils.set_request(method="POST", headers={"User-Agent": "suite-cloud-agent/0.2.0+abcdef12"})
+        token = self.token if token is None else token
+        cluster = self.cluster.name if cluster is None else cluster
+        frappe.local.hook_cluster = None
+        frappe.set_user("Guest")
+        path = f"{HOOK}?cluster={cluster}" if cluster else HOOK
+        frappe.utils.set_request(method="POST", path=path, headers={"Authorization": f"Bearer {token}"})
         frappe.local.form_dict = frappe._dict()
+        authenticate()
 
-    def pull(self, since: str | None = None) -> dict:
-        self.as_agent()
-        return quota_api.limits(NODE_IP, since)
+    def check(self, login: str | None = "alice@acme.com") -> dict:
+        self.sign_in()
+        context = {"stage": "rcpt", "sasl": {"login": login} if login else None}
+        envelope = {"from": {"address": login or ""}, "to": [{"address": "someone@example.com"}]}
+        return json.loads(sending_limits_api.check(context=context, envelope=envelope).get_data())
 
-
-class TestLimitsApi(SendingLimitsTestCase):
-    def test_pages_lose_no_account_that_shares_a_modified_time(self) -> None:
-        moment = now_datetime() - timedelta(minutes=1)
-        frappe.db.set_value("Mail Account", {"domain": "acme.com"}, "modified", moment, update_modified=False)
-        with patch.object(quota_api, "PAGE_SIZE", 2):
-            first = self.pull()
-            second = self.pull(first["next_version"])
-            third = self.pull(second["next_version"])
-
-        self.assertTrue(first["has_more"])
-        self.assertFalse(second["has_more"])
-        names = [entry["account"] for entry in first["limits"] + second["limits"]]
-        self.assertEqual(names, ["alice@acme.com", "bob@acme.com", "carol@acme.com"])
-        self.assertEqual(first["limits"][0]["daily"], 100)
-        self.assertEqual(first["limits"][0]["version"], moment.strftime("%Y-%m-%d %H:%M:%S.%f"))
-        self.assertEqual((third["limits"], third["next_version"]), ([], second["next_version"]))
-
-        frappe.set_user("Administrator")
-        accounts_doc = frappe.get_doc("Mail Account", "bob@acme.com")
-        accounts_doc.monthly_send_limit = 500
-        accounts_doc.save()
-        changed = self.pull(second["next_version"])["limits"]
-        self.assertEqual([(e["account"], e["monthly"]) for e in changed], [("bob@acme.com", 500)])
-
-    def test_a_save_is_served_once_it_settled(self) -> None:
-        with patch.object(quota_api, "SETTLE_SECONDS", 60):
-            self.assertEqual(self.pull()["limits"], [])
-        self.assertEqual(len(self.pull()["limits"]), 3)
-
-    def test_only_one_active_node_of_the_cluster_may_pull(self) -> None:
-        self.as_agent()
-        for host_ip in ("198.51.100.1", "not-an-ip"):
-            self.assertRaises((frappe.PermissionError, InvalidInputError), quota_api.limits, host_ip)
-        self.assertRaisesRegex(InvalidInputError, "since_version", quota_api.limits, NODE_IP, "2026")
-
-        frappe.set_user("Administrator")
-        other = make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}")
-        self.as_agent(other.name)  # another cluster's Agent naming this cluster's node
-        self.assertRaisesRegex(frappe.PermissionError, "Agent's cluster", quota_api.limits, NODE_IP)
-
-        frappe.set_user("Administrator")
-        self.node.db_set("status", "Provisioned")
-        self.assertRaises(frappe.PermissionError, self.pull)
-
-    def test_quota_calls_leave_the_telemetry_status_to_pushes(self) -> None:
-        frappe.cache.hdel(CACHE_KEY, NODE_IP)  # only this test's node: the site may run real agents
-        self.pull()
-        self.assertIsNone(frappe.cache.hget(CACHE_KEY, NODE_IP))
-
-    def test_the_pull_reads_an_index_on_cluster_and_modified(self) -> None:
-        self.assertTrue(frappe.db.has_index("tabMail Account", "cluster_modified_index"))
-        # Each Agent call finds its server by cluster and address.
-        for doctype in ("Stalwart Node", "Egress Gateway"):
-            self.assertTrue(frappe.db.has_index(f"tab{doctype}", "cluster_ipv4_address_index"))
-
-    def test_only_agents_may_call(self) -> None:
-        frappe.set_user("Administrator")
-        self.assertRaises(frappe.PermissionError, quota_api.limits, NODE_IP)
-        self.assertRaises(frappe.PermissionError, quota_api.usage, NODE_IP, [])
-
-
-class TestUsageApi(SendingLimitsTestCase):
-    def push(self, *records: tuple) -> dict:
-        """``(account, period, sent)`` or ``(account, period, sent, refused)`` each."""
-
-        self.as_agent()
-        keys = ("account", "period", "sent", "refused")
-        return quota_api.usage(NODE_IP, [dict(zip(keys, record, strict=False)) for record in records])
+    def counter(self, account: str, period: str) -> dict:
+        counts = sending_limits.get_client().hgetall(sending_limits.counter_key(account, period))
+        return {key.decode(): int(value) for key, value in counts.items()}
 
     def stored(self, account: str, period: str, field: str = "sent") -> int | None:
         return frappe.db.get_value("Mail Send Usage", {"account": account, "period": period}, field)
 
+    def is_limit_cached(self, account: str) -> bool:
+        return bool(
+            sending_limits.get_client().exists(sending_limits.make_key(f"sending_limits:limit:{account}"))
+        )
+
+
+class TestCheck(SendingLimitsTestCase):
+    def test_a_recipient_under_the_limits_is_accepted_and_counted(self) -> None:
+        day, month = current_periods()
+        self.assertEqual(self.check(), {"action": "accept"})
+        self.assertEqual(self.check(" Alice@ACME.com "), {"action": "accept"})
+        self.assertEqual(self.counter("alice@acme.com", day), {"sent": 2, "refused": 0})
+        self.assertEqual(self.counter("alice@acme.com", month), {"sent": 2, "refused": 0})
+        members = sending_limits.get_client().smembers(sending_limits.make_key(sending_limits.TOUCHED))
+        self.assertEqual(members, {f"alice@acme.com|{day}".encode(), f"alice@acme.com|{month}".encode()})
+
+    def test_the_daily_limit_refuses_and_counts_the_refusal(self) -> None:
+        day, month = current_periods()
+        upsert_usage([{"account": "alice@acme.com", "period": day, "sent": 99, "refused": 0}])
+        self.assertEqual(self.check(), {"action": "accept"})
+        tomorrow = self.now.date() + timedelta(days=1)
+        message = (
+            "Daily sending limit of 100 recipients reached for alice@acme.com. "
+            f"It resets at {tomorrow:%Y-%m-%d} 00:00 UTC."
+        )
+        reject = {
+            "action": "reject",
+            "response": {"status": 550, "enhanced_status": "5.4.5", "message": message},
+        }
+        self.assertEqual(self.check(), reject)
+        self.assertEqual(self.counter("alice@acme.com", day), {"sent": 100, "refused": 1})
+        self.assertEqual(self.counter("alice@acme.com", month), {"sent": 1, "refused": 1})
+
+    def test_the_monthly_limit_refuses_until_the_first_of_next_month(self) -> None:
+        _day, month = current_periods()
+        upsert_usage([{"account": "alice@acme.com", "period": month, "sent": 10000, "refused": 0}])
+        answer = self.check()
+        next_month = (self.now.date().replace(day=1) + timedelta(days=32)).replace(day=1)
+        self.assertEqual(
+            answer["response"]["message"],
+            "Monthly sending limit of 10,000 recipients reached for alice@acme.com. "
+            f"It resets at {next_month:%Y-%m-%d} 00:00 UTC.",
+        )
+        self.assertEqual(self.counter("alice@acme.com", month), {"sent": 10000, "refused": 1})
+
+    def test_a_long_address_keeps_the_message_on_one_short_line(self) -> None:
+        limits = sending_limits.Limits("c", 2000, 10000)
+        message = sending_limits.get_refusal_message("daily", f"{'a' * 64}@{'b' * 180}.com", limits, self.now)
+        self.assertLess(len(message), 200)
+        self.assertNotIn("\n", message)
+
+    def test_stalwart_gets_its_own_json_over_http(self) -> None:
+        db = frappe.local.db
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "X-Frappe-Site-Name": frappe.local.site,
+            "Content-Type": "application/json",
+        }
+        body = {"context": {"stage": "rcpt", "sasl": {"login": "alice@acme.com"}}, "envelope": {"to": [{}]}}
+        with (
+            patch("frappe.database.get_db", return_value=db),
+            patch.object(db, "commit"),
+            patch.object(db, "rollback"),
+            patch("frappe.destroy"),
+            production_logging(),
+        ):
+            response = get_test_client().open(
+                f"{HOOK}?cluster={self.cluster.name}",
+                method="POST",
+                headers=headers,
+                base_url="http://localhost/",
+                data=json.dumps(body),
+            )
+        self.assertEqual((response.status_code, response.get_json()), (200, {"action": "accept"}))
+        self.assertEqual(response.mimetype, "application/json")
+
+    def test_other_clusters_unknown_addresses_and_anonymous_senders_pass_uncounted(self) -> None:
+        day, _month = current_periods()
+        other = make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}")
+        frappe.db.set_value("Mail Account", "bob@acme.com", "cluster", other.name)
+        for login in ("bob@acme.com", "ghost@acme.com", None):
+            with self.subTest(login=login):
+                self.assertEqual(self.check(login), {"action": "accept"})
+        self.sign_in()
+        no_recipient = sending_limits_api.check(
+            context={"sasl": {"login": "carol@acme.com"}}, envelope={"to": []}
+        )
+        self.assertEqual(json.loads(no_recipient.get_data()), {"action": "accept"})
+        for account in ("bob@acme.com", "ghost@acme.com", "carol@acme.com"):
+            self.assertEqual(self.counter(account, day), {})
+
+    def test_only_the_named_cluster_s_token_signs_in(self) -> None:
+        other = make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}")
+        cases = (
+            ("wrong", self.cluster.name),
+            (self.token, ""),
+            (other.get_password("quota_hook_token"), self.cluster.name),
+            (self.token, other.name),
+            (self.token, "no-such-cluster"),
+        )
+        for token, cluster in cases:
+            with self.subTest(cluster=cluster), self.assertRaises(frappe.AuthenticationError) as raised:
+                self.sign_in(token, cluster)
+            self.assertEqual(raised.exception.http_status_code, 401)
+
+        # Telemetry being off does not matter, and only a signed-in hook may call.
+        frappe.set_user("Administrator")
+        configure_settings(enable_telemetry=0)
+        self.sign_in()
+        self.assertEqual(
+            (frappe.session.user, frappe.local.hook_cluster), (TELEMETRY_USER, self.cluster.name)
+        )
+        frappe.set_user("Administrator")
+        frappe.local.hook_cluster = None
+        self.assertRaises(frappe.PermissionError, sending_limits_api.check)
+
+    def test_a_saved_cluster_forgets_its_token_after_commit(self) -> None:
+        self.sign_in()
+        frappe.set_user("Administrator")
+        frappe.db.delete(
+            "__Auth",
+            {"doctype": "Stalwart Cluster", "name": self.cluster.name, "fieldname": "quota_hook_token"},
+        )
+        fill_quota_hook_tokens.execute()  # a new token
+        cluster = frappe.get_doc("Stalwart Cluster", self.cluster.name)
+        cluster.save()
+        self.sign_in()  # the cached hash still opens until the save commits
+        frappe.db.after_commit.run()
+        self.assertRaises(frappe.AuthenticationError, self.sign_in)
+        self.sign_in(cluster.get_password("quota_hook_token"))
+
+    def test_a_missing_counter_is_seeded_from_mail_send_usage_once(self) -> None:
+        day, month = current_periods()
+        upsert_usage(
+            [
+                {"account": "alice@acme.com", "period": day, "sent": 40, "refused": 2},
+                {"account": "alice@acme.com", "period": month, "sent": 900, "refused": 5},
+            ]
+        )
+        with patch.object(sending_limits, "get_seed", wraps=sending_limits.get_seed) as seed:
+            self.check()
+            self.check()
+        seed.assert_called_once_with("alice@acme.com", day, month)
+        self.assertEqual(self.counter("alice@acme.com", day), {"sent": 42, "refused": 2})
+        self.assertEqual(self.counter("alice@acme.com", month), {"sent": 902, "refused": 5})
+
+        # A counter Redis lost is seeded again; the other keeps its count.
+        sending_limits.get_client().delete(sending_limits.counter_key("alice@acme.com", month))
+        self.check()
+        self.assertEqual(self.counter("alice@acme.com", day), {"sent": 43, "refused": 2})
+        self.assertEqual(self.counter("alice@acme.com", month), {"sent": 901, "refused": 5})
+
+    def test_two_checks_of_the_last_free_recipient_get_one_accept(self) -> None:
+        day, _month = current_periods()
+        self.check()  # caches the limits and creates the counters, so the threads read no row
+        sending_limits.get_client().hset(sending_limits.counter_key("alice@acme.com", day), "sent", 99)
+        barrier = threading.Barrier(2)
+        answers = []
+
+        def count() -> None:
+            barrier.wait()
+            answers.append(sending_limits.count_recipient(self.cluster.name, "alice@acme.com"))
+
+        threads = [threading.Thread(target=contextvars.copy_context().run, args=(count,)) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sorted(answer is None for answer in answers), [False, True])
+        self.assertEqual(self.counter("alice@acme.com", day), {"sent": 100, "refused": 1})
+
+    def test_a_redis_fault_answers_500(self) -> None:
+        self.sign_in()
+        with patch.object(sending_limits, "get_client", side_effect=redis.ConnectionError("down")):
+            response = sending_limits_api.check(
+                context={"sasl": {"login": "alice@acme.com"}}, envelope={"to": [{"address": "x@example.com"}]}
+            )
+        self.assertEqual(response.status_code, 500)
+
+
+class TestLimitsCache(SendingLimitsTestCase):
+    def test_a_limit_change_clears_the_cache_after_commit_only(self) -> None:
+        self.assertEqual(sending_limits.get_limits("bob@acme.com").daily, 100)
+        bob = frappe.get_doc("Mail Account", "bob@acme.com")
+        bob.daily_send_limit = 50
+        bob.save()
+        self.assertTrue(self.is_limit_cached("bob@acme.com"))  # another worker could cache the old row
+        frappe.db.after_commit.run()
+        self.assertFalse(self.is_limit_cached("bob@acme.com"))
+        self.assertEqual(sending_limits.get_limits("bob@acme.com").daily, 50)
+
+        bob.daily_send_limit = 60
+        bob.save()
+        frappe.db.after_commit.reset()  # what a rollback does
+        self.assertEqual(sending_limits.get_limits("bob@acme.com").daily, 50)
+
+        bob.display_name = "Bob"
+        bob.save()  # nothing the cache holds
+        frappe.db.after_commit.run()
+        self.assertTrue(self.is_limit_cached("bob@acme.com"))
+
+    def test_a_new_account_clears_a_cached_unknown_address(self) -> None:
+        self.assertEqual(sending_limits.get_limits("dave@acme.com"), sending_limits.Limits("", 0, 0))
+        self.act_as(self.tenant)
+        accounts.create_account("dave@acme.com", "secret-pw")
+        self.assertEqual(sending_limits.get_limits("dave@acme.com").cluster, "")
+        frappe.db.after_commit.run()
+        self.assertEqual(
+            sending_limits.get_limits("dave@acme.com"), sending_limits.Limits(self.cluster.name, 2000, 10000)
+        )
+
+        accounts.delete_account("dave@acme.com")
+        frappe.db.after_commit.run()
+        self.assertEqual(sending_limits.get_limits("dave@acme.com").cluster, "")
+
+
+class TestFlush(SendingLimitsTestCase):
+    def test_the_touched_counters_reach_mail_send_usage_once(self) -> None:
+        day, month = current_periods()
+        self.check()
+        self.check()
+        self.check("bob@acme.com")
+        sending_limits.flush_usage()
+        self.assertEqual((self.stored("alice@acme.com", day), self.stored("alice@acme.com", month)), (2, 2))
+        self.assertEqual(self.stored("bob@acme.com", day), 1)
+        client = sending_limits.get_client()
+        self.assertFalse(client.exists(sending_limits.make_key(sending_limits.TOUCHED)))
+        self.assertFalse(client.exists(sending_limits.make_key(sending_limits.FLUSHING)))
+
+        with patch.object(sending_limits, "upsert_usage") as upsert:
+            sending_limits.flush_usage()  # nothing touched since
+        upsert.assert_not_called()
+
+        # Written again, as after a failed run, nothing changes.
+        client.sadd(sending_limits.make_key(sending_limits.FLUSHING), f"alice@acme.com|{day}")
+        sending_limits.flush_usage()
+        self.assertEqual(self.stored("alice@acme.com", day), 2)
+
+    def test_a_failed_run_is_written_again_and_keeps_the_new_entries(self) -> None:
+        day, _month = current_periods()
+        self.check()
+        with patch.object(sending_limits, "upsert_usage", side_effect=RuntimeError("database down")):
+            self.assertRaises(RuntimeError, sending_limits.flush_usage)
+        self.check("bob@acme.com")  # touched while the failed set waits
+
+        client = sending_limits.get_client()
+        sending_limits.flush_usage()
+        self.assertEqual(self.stored("alice@acme.com", day), 1)
+        self.assertIsNone(self.stored("bob@acme.com", day))  # the next run's
+        self.assertEqual(
+            {
+                member.decode().partition("|")[0]
+                for member in client.smembers(sending_limits.make_key(sending_limits.TOUCHED))
+            },
+            {"bob@acme.com"},
+        )
+        sending_limits.flush_usage()
+        self.assertEqual(self.stored("bob@acme.com", day), 1)
+
+    def test_old_periods_and_expired_counters_are_skipped(self) -> None:
+        day, _month = current_periods()
+        old_day, _old_month = periods_at(self.now - timedelta(days=3))
+        client = sending_limits.get_client()
+        client.hset(sending_limits.counter_key("alice@acme.com", old_day), mapping={"sent": 5, "refused": 0})
+        client.sadd(
+            sending_limits.make_key(sending_limits.TOUCHED),
+            f"alice@acme.com|{old_day}",
+            f"bob@acme.com|{day}",  # its counter expired
+        )
+        sending_limits.flush_usage()
+        self.assertIsNone(self.stored("alice@acme.com", old_day))
+        self.assertIsNone(self.stored("bob@acme.com", day))
+
+    def test_yesterday_and_last_month_are_taken_after_midnight(self) -> None:
+        """The first flush after midnight UTC writes the periods that just ended."""
+
+        moment = datetime(2026, 11, 1, 0, 0, 30, tzinfo=UTC)
+        client = sending_limits.get_client()
+        periods = {"d:20261101": 1, "m:202611": 1, "d:20261031": 7, "m:202610": 40, "d:20261030": 5}
+        for period, sent in periods.items():
+            client.hset(
+                sending_limits.counter_key("alice@acme.com", period), mapping={"sent": sent, "refused": 2}
+            )
+            client.sadd(sending_limits.make_key(sending_limits.TOUCHED), f"alice@acme.com|{period}")
+        with patch.object(mail_send_usage, "datetime", frozen_clock(moment)):
+            sending_limits.flush_usage()
+        stored = frappe.get_all("Mail Send Usage", {"account": "alice@acme.com"}, ["period", "sent"])
+        self.assertEqual(
+            {row.period: row.sent for row in stored},
+            {"d:20261101": 1, "m:202611": 1, "d:20261031": 7, "m:202610": 40},
+        )
+
+
+class TestUsage(SendingLimitsTestCase):
     def test_rows_are_written_in_one_lock_order(self) -> None:
         day, month = current_periods()
+        rows = [("bob@acme.com", day), ("alice@acme.com", month), ("alice@acme.com", day)]
         with patch.object(frappe.db, "sql", wraps=frappe.db.sql) as sql:
-            self.push(("bob@acme.com", day, 1), ("alice@acme.com", month, 1), ("alice@acme.com", day, 1))
+            upsert_usage([{"account": a, "period": p, "sent": 1, "refused": 0} for a, p in rows])
         insert = next(call for call in sql.call_args_list if "Mail Send Usage" in str(call.args[0]))
         values = [str(value) for value in insert.args[1].values()]  # in the order of the statement
         written = [(value, values[i + 1]) for i, value in enumerate(values) if value.endswith("@acme.com")]
         self.assertEqual(written, [("alice@acme.com", day), ("alice@acme.com", month), ("bob@acme.com", day)])
 
-    def test_the_higher_count_of_two_agents_is_kept(self) -> None:
-        day, month = current_periods()
-        self.assertEqual(self.push(("alice@acme.com", day, 5), ("alice@acme.com", month, 40))["accepted"], 2)
-        self.push(("alice@acme.com", day, 3))  # another node read the counter earlier
-        self.assertEqual(self.stored("alice@acme.com", day), 5)
-        self.push(("alice@acme.com", day, 7))
-        self.assertEqual((self.stored("alice@acme.com", day), self.stored("alice@acme.com", month)), (7, 40))
+    def test_the_higher_count_is_kept(self) -> None:
+        day, _month = current_periods()
 
-        # Refusals are kept the same way, and an Agent that sends none leaves them as they are.
-        self.push(("alice@acme.com", day, 7, 2))
-        self.push(("alice@acme.com", day, 7, 1), ("alice@acme.com", day, 7))
-        self.assertEqual(self.stored("alice@acme.com", day, "refused"), 2)
+        def write(sent: int, refused: int = 0) -> None:
+            upsert_usage([{"account": "alice@acme.com", "period": day, "sent": sent, "refused": refused}])
 
-    def test_each_period_keeps_the_limit_it_was_last_reported_with(self) -> None:
+        write(5, 2)
+        write(3, 1)  # a late flush of an older count
+        self.assertEqual(
+            (self.stored("alice@acme.com", day), self.stored("alice@acme.com", day, "refused")), (5, 2)
+        )
+        write(7)
+        self.assertEqual(self.stored("alice@acme.com", day), 7)
+
+    def test_each_period_keeps_the_limit_it_was_last_written_with(self) -> None:
         day, month = current_periods()
         frappe.db.set_value("Mail Account", "alice@acme.com", "monthly_send_limit", 2000)
-        self.push(("alice@acme.com", day, 5), ("alice@acme.com", month, 40))
+        upsert_usage(
+            [
+                {"account": "alice@acme.com", "period": day, "sent": 5, "refused": 0},
+                {"account": "alice@acme.com", "period": month, "sent": 40, "refused": 0},
+            ]
+        )
         stored = frappe.get_all("Mail Send Usage", {"account": "alice@acme.com"}, ["period", "send_limit"])
         self.assertEqual({row.period: row.send_limit for row in stored}, {day: 100, month: 2000})
 
         frappe.db.set_value("Mail Account", "alice@acme.com", "daily_send_limit", 150)
-        self.push(("alice@acme.com", day, 6))
+        upsert_usage([{"account": "alice@acme.com", "period": day, "sent": 6, "refused": 0}])
         self.assertEqual(self.stored("alice@acme.com", day, "send_limit"), 150)
 
-    def test_a_late_report_keeps_the_limit_of_its_day(self) -> None:
+    def test_a_late_flush_keeps_the_limit_of_its_day(self) -> None:
         yesterday, _month = periods_at(self.now - timedelta(days=1))
-        self.push(("alice@acme.com", yesterday, 90))
+        upsert_usage([{"account": "alice@acme.com", "period": yesterday, "sent": 90, "refused": 0}])
         frappe.db.set_value("Mail Account", "alice@acme.com", "daily_send_limit", 10)  # after midnight
-        self.push(("alice@acme.com", yesterday, 95))
+        upsert_usage([{"account": "alice@acme.com", "period": yesterday, "sent": 95, "refused": 0}])
         self.assertEqual(self.stored("alice@acme.com", yesterday), 95)
         self.assertEqual(self.stored("alice@acme.com", yesterday, "send_limit"), 100)
 
@@ -210,57 +470,19 @@ class TestUsageApi(SendingLimitsTestCase):
             [
                 {"account": "gone@acme.com", "period": day, "sent": 3, "refused": 0},
                 {"account": "alice@acme.com", "period": day, "sent": 2, "refused": 0},
-            ],
-            self.cluster.name,
+            ]
         )
         self.assertEqual(self.stored("alice@acme.com", day), 2)
         self.assertIsNone(self.stored("gone@acme.com", day))
 
-    def test_another_cluster_s_accounts_are_dropped(self) -> None:
-        day, _month = current_periods()
-        frappe.set_user("Administrator")
-        other = make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}")
-        frappe.db.set_value("Mail Account", "bob@acme.com", "cluster", other.name)
-        answer = self.push(("alice@acme.com", day, 1), ("bob@acme.com", day, 1))
-        self.assertEqual(answer["accepted"], 1)
-        self.assertIsNone(self.stored("bob@acme.com", day))
-
-    def test_unknown_accounts_and_old_periods_are_dropped(self) -> None:
-        day, _month = current_periods()
-        old_day, _old_month = periods_at(self.now - timedelta(days=3))
-        answer = self.push(
-            ("ALICE@acme.com", day, 1), ("ghost@acme.com", day, 1), ("bob@acme.com", old_day, 1)
-        )
-        self.assertEqual(answer["accepted"], 1)
-        self.assertEqual(self.stored("alice@acme.com", day), 1)
-        self.assertIsNone(self.stored("bob@acme.com", old_day))
-        self.assertRaises(InvalidInputError, self.push, ("bob@acme.com", day, -1))
-        self.assertRaises(InvalidInputError, self.push, ("bob@acme.com", day, 1, -1))
-
-    def test_yesterday_and_last_month_are_taken_after_midnight(self) -> None:
-        """The Agent's first push after midnight UTC sends the periods that just ended."""
-
-        moment = datetime(2026, 11, 1, 0, 0, 30, tzinfo=UTC)
-        with patch.object(mail_send_usage, "datetime", frozen_clock(moment)):
-            answer = self.push(
-                ("alice@acme.com", "d:20261101", 1),
-                ("alice@acme.com", "m:202611", 1),
-                ("alice@acme.com", "d:20261031", 7, 2),
-                ("alice@acme.com", "m:202610", 40, 2),
-                ("alice@acme.com", "d:20261030", 5),
-            )
-        self.assertEqual(answer["accepted"], 4)
-        stored = frappe.get_all(
-            "Mail Send Usage", {"account": "alice@acme.com"}, ["period", "sent", "refused"]
-        )
-        self.assertEqual(
-            {row.period: (row.sent, row.refused) for row in stored},
-            {"d:20261101": (1, 0), "m:202611": (1, 0), "d:20261031": (7, 2), "m:202610": (40, 2)},
-        )
-
     def test_form_and_api_show_the_usage_and_delete_takes_it(self) -> None:
         day, month = current_periods()
-        self.push(("alice@acme.com", day, 80, 3), ("alice@acme.com", month, 900, 5))
+        upsert_usage(
+            [
+                {"account": "alice@acme.com", "period": day, "sent": 80, "refused": 3},
+                {"account": "alice@acme.com", "period": month, "sent": 900, "refused": 5},
+            ]
+        )
         usage = {"day": 80, "month": 900, "refused_day": 3, "refused_month": 5}
         frappe.set_user("Administrator")
         doc = frappe.get_doc("Mail Account", "alice@acme.com")
@@ -285,11 +507,7 @@ class TestUsageApi(SendingLimitsTestCase):
         inside, outside, old = (now - timedelta(days=days) for days in (29, 31, 70))
         rows = [*current_periods(), *periods_at(inside), *periods_at(outside), *periods_at(old)]
         upsert_usage(
-            [
-                {"account": "alice@acme.com", "period": period, "sent": 1, "refused": 0}
-                for period in set(rows)
-            ],
-            self.cluster.name,
+            [{"account": "alice@acme.com", "period": period, "sent": 1, "refused": 0} for period in set(rows)]
         )
         with (
             patch(f"{mail_send_usage.__name__}.get_config", return_value=30),
@@ -311,6 +529,10 @@ class TestUsageApi(SendingLimitsTestCase):
 
 
 class TestTenantSendLimits(SendingLimitsTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.act_as(self.tenant)
+
     def test_a_new_account_gets_its_tenant_s_default_limits_unless_the_tenant_sets_them(self) -> None:
         created = accounts.create_account("dave@acme.com", "secret-pw")
         self.assertEqual((created["daily_send_limit"], created["monthly_send_limit"]), (2000, 10000))
@@ -368,8 +590,7 @@ class TestTenantSendLimits(SendingLimitsTestCase):
                 frappe.ValidationError, f"between 1 and the cluster's max of 10000, not {value}", tenant.save
             )
 
-    def test_the_patch_fills_unset_limits_from_the_tenant_and_the_agents_pull_them(self) -> None:
-        cursor = self.pull()["next_version"]
+    def test_the_patch_fills_unset_limits_from_the_tenant(self) -> None:
         fields = list(fill_send_limit_defaults.FIELDS)
         frappe.db.set_value("Mail Account", "bob@acme.com", dict.fromkeys(fields, 0), update_modified=False)
         self.tenant.db_set({"default_daily_send_limit": 300, "default_monthly_send_limit": 4000})
@@ -379,21 +600,17 @@ class TestTenantSendLimits(SendingLimitsTestCase):
 
         self.assertEqual(frappe.db.get_value("Mail Account", "bob@acme.com", fields), (300, 4000))
         self.assertEqual(frappe.db.get_value("Mail Account", "alice@acme.com", fields), (100, 10000))
-        pulled = {entry["account"]: entry for entry in self.pull(cursor)["limits"]}
-        self.assertEqual(set(pulled), {"bob@acme.com"})
-        self.assertEqual((pulled["bob@acme.com"]["daily"], pulled["bob@acme.com"]["monthly"]), (300, 4000))
 
     def test_tenants_read_an_account_s_daily_history(self) -> None:
         now = self.now
         # The window's first day is six days back, which some dates put in the previous month.
         today, two_days_ago, first_day, long_ago = (now - timedelta(days=days) for days in (0, 2, 6, 40))
-        # A future row, which the usage API never stores, stays out of the answer too.
+        # A future row, which no flush stores, stays out of the answer too.
         future = now + timedelta(days=40)
         moments = (today, two_days_ago, first_day, long_ago, future)
         periods = {period for moment in moments for period in periods_at(moment)}
         upsert_usage(
-            [{"account": "alice@acme.com", "period": period, "sent": 9, "refused": 1} for period in periods],
-            self.cluster.name,
+            [{"account": "alice@acme.com", "period": period, "sent": 9, "refused": 1} for period in periods]
         )
 
         history = accounts.get_send_usage("alice@acme.com", days=7)
@@ -412,42 +629,41 @@ class TestTenantSendLimits(SendingLimitsTestCase):
 
 
 class TestQuotaPlan(SendingLimitsTestCase):
-    def test_the_plan_carries_the_hook_once_the_agents_answer_it(self) -> None:
-        objects = lambda operations: {op["object"] for op in operations}  # noqa: E731
-
-        def quota_objects(operations: list[dict]) -> dict:
-            values = {op["object"]: op["value"] for op in operations}
-            return values["MtaHook"]["quota"], values["MtaInboundThrottle"]["quota-backstop"]
-
-        # Off: both stay in the plan, switched off, so a hook installed before is turned off too.
-        with patch.object(quota, "is_quota_enabled", return_value=False):
-            hook, backstop = quota_objects(plan.cluster_plan(self.cluster))
-        self.assertEqual((hook["enable"], backstop["enable"]), (quota.NEVER, False))
-
-        with patch.object(quota, "is_quota_enabled", return_value=True):
-            operations = plan.cluster_plan(self.cluster)
-            recovery = plan.recovery_plan(self.cluster)
-        hook = next(op for op in operations if op["object"] == "MtaHook")["value"]["quota"]
-        self.assertEqual(hook["url"], "http://127.0.0.1:8095/hooks/quota")
+    def test_the_plan_retires_the_agent_hook_and_carries_suite_cloud_s(self) -> None:
+        configure_settings(enable_telemetry=0, public_url="https://cloud.example.test")
+        operations = plan.cluster_plan(self.cluster)
+        hooks = [op for op in operations if op["object"] == "MtaHook"]
         self.assertEqual(
-            (hook["stages"], hook["timeout"], hook["tempFailOnError"]), ({"data": True}, 2000, False)
+            [(op["@type"], op.get("matchOn")) for op in hooks],
+            [("destroy", None), ("upsert", ["httpHeaders"])],
+        )
+        self.assertEqual(hooks[0]["value"], {"url": "http://127.0.0.1:8095/hooks/quota"})
+
+        hook = hooks[1]["value"]["sending-limits"]
+        self.assertEqual(
+            hook["url"],
+            f"https://cloud.example.test/api/v2/method/suite_cloud.api.sending_limits.check?cluster={self.cluster.name}",
         )
         self.assertEqual(
-            hook["httpAuth"]["bearerToken"]["secret"], self.cluster.get_password("quota_hook_token")
+            (hook["enable"], hook["stages"], hook["timeout"], hook["tempFailOnError"]),
+            (quota.SIGNED_IN, {"rcpt": True}, 1000, False),
         )
-        self.assertIn(self.cluster.get_password("quota_hook_token"), plan.secret_strings(operations))
+        self.assertEqual(hook["httpHeaders"], {"X-Suite-Cloud-Hook": "sending-limits"})
+        self.assertEqual(hook["httpAuth"]["bearerToken"]["secret"], self.token)
+        self.assertIn(self.token, plan.secret_strings(operations))
 
         throttle = next(op for op in operations if op["object"] == "MtaInboundThrottle")["value"][
             "quota-backstop"
         ]
-        # Only signed-in sessions: unauthenticated ones would share one bucket otherwise.
+        # Only signed-in sessions: unauthenticated ones would share one bucket otherwise. Telemetry off
+        # does not switch it off.
         self.assertEqual(throttle["match"], quota.SIGNED_IN)
         self.assertEqual(
             (throttle["enable"], throttle["key"], throttle["rate"]),
             (True, {"authenticatedAs": True}, {"count": 2000, "period": 86_400_000}),
         )
 
-        # The cap is the cluster's and is never off: nothing else caps an account while the Agents are down.
+        # The cap is the cluster's and is never off: nothing else caps an account while Suite Cloud is down.
         for field in ("max_daily_send_limit", "max_monthly_send_limit"):
             cluster = frappe.get_doc("Stalwart Cluster", self.cluster.name)
             cluster.set(field, 0)
@@ -460,8 +676,28 @@ class TestQuotaPlan(SendingLimitsTestCase):
         )
 
         # Stalwart adds its default throttles only when none exist, so recovery leaves ours out.
-        self.assertIn("MtaHook", objects(recovery))
-        self.assertNotIn("MtaInboundThrottle", objects(recovery))
+        recovery = {op["object"] for op in plan.recovery_plan(self.cluster)}
+        self.assertIn("MtaHook", recovery)
+        self.assertNotIn("MtaInboundThrottle", recovery)
+
+    def test_a_push_swaps_the_agent_hook_for_suite_cloud_s(self) -> None:
+        self.fake._add("MtaHook", {"url": "http://127.0.0.1:8095/hooks/quota", "stages": {"data": True}})
+        self.cluster.push_config()
+        self.cluster.push_config()  # a second push finds the hook by its header
+        hooks = self.fake.all("MtaHook")
+        self.assertEqual([hook["httpHeaders"] for hook in hooks], [{"X-Suite-Cloud-Hook": "sending-limits"}])
+
+    def test_the_patch_keeps_queued_jobs_callbacks_and_moves_no_cluster(self) -> None:
+        node = make_node(self.cluster)
+        with patch(EXECUTE):
+            retried = install.telemetry_job(node)
+        retried.db_set("callback", "after_install_agent")  # a job queued before the deploy
+        with patch("frappe.enqueue") as enqueue:
+            move_sending_limits_to_suite_cloud.execute()
+        self.assertEqual(
+            frappe.db.get_value("Server Job", retried.name, "callback"), "after_install_telemetry"
+        )
+        enqueue.assert_not_called()  # each cluster is moved by hand
 
     def test_the_patch_turns_the_backstop_on_without_a_config_push(self) -> None:
         self.cluster.db_set("max_daily_send_limit", 0)

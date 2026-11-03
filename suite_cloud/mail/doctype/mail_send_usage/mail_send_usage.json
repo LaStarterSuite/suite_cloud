@@ -1,7 +1,7 @@
 {
  "actions": [],
  "creation": "2026-10-26 12:00:00.000000",
- "description": "What the Agents last reported an account sent in a UTC day or month. Only the telemetry API writes it.",
+ "description": "What an account sent in a UTC day or month. The sending-limit counters write it every minute.",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -54,7 +54,7 @@
    "read_only": 1
   },
   {
-   "description": "Messages refused for going over the limit.",
+   "description": "Recipients refused for going over the limit.",
    "fieldname": "refused",
    "fieldtype": "Int",
    "in_list_view": 1,
@@ -75,7 +75,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 0,
  "links": [],
- "modified": "2026-10-28 18:15:24.800932",
+ "modified": "2026-11-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Mail Send Usage",

@@ -1,9 +1,9 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""What the Agents report an account sent: one row per account and UTC period, unique on the two.
-The Agents count; Suite Cloud keeps their last report of each period, for the retention in Suite
-Cloud Settings, so the Mail Account form never waits on a node."""
+"""What an account sent: one row per account and UTC period, unique on the two. The sending-limit
+counters live in the Redis cache (``suite_cloud.mail.sending_limits``), which flushes them here
+every minute; rows are kept for the retention in Suite Cloud Settings."""
 
 import hashlib
 from datetime import UTC, datetime, timedelta
@@ -53,7 +53,7 @@ def usage_name(account: str, period: str) -> str:
 
 
 def periods_at(moment: datetime) -> tuple[str, str]:
-    """The day and month keys the Agents count under, in UTC."""
+    """The day and month keys the counters use, in UTC."""
 
     moment = moment.astimezone(UTC)
     return f"d:{moment:%Y%m%d}", f"m:{moment:%Y%m}"
@@ -64,7 +64,7 @@ def current_periods() -> tuple[str, str]:
 
 
 def reportable_periods() -> set[str]:
-    """Today, this month and the ones before: an Agent may push just after midnight."""
+    """Today, this month and the ones before: a flush may run just after midnight."""
 
     now = datetime.now(UTC)
     return {*periods_at(now), *periods_at(now - timedelta(days=1))}
@@ -72,7 +72,7 @@ def reportable_periods() -> set[str]:
 
 def sent_by_account(accounts: list[str]) -> dict[str, dict[str, int]]:
     """``{account: {day, month, refused_day, refused_month}}`` for the current periods: recipients
-    sent and messages refused, in one query."""
+    sent and refused, in one query."""
 
     day, month = current_periods()
     usage = {account: {"day": 0, "month": 0, "refused_day": 0, "refused_month": 0} for account in accounts}
@@ -119,20 +119,20 @@ def usage_history(account: str, days: int) -> dict[str, list[dict]]:
     return history
 
 
-def upsert_usage(rows: list[dict], cluster: str) -> int:
-    """Stores the ``{account, period, sent, refused}`` rows of the cluster's accounts in one
-    statement and returns how many it stored. Agents on several nodes report the same counters,
-    and a counter only grows within its period, so the higher count is kept. A current period
-    takes the account's limit as it is now; a past one keeps the limit it was stored with, so a
-    late report after a limit change does not rewrite it."""
+def upsert_usage(rows: list[dict]) -> int:
+    """Stores the ``{account, period, sent, refused}`` rows in one statement and returns how many
+    it stored. A counter only grows within its period, so the higher count is kept, and a flush
+    written twice changes nothing. A current period takes the account's limit as it is now; a past
+    one keeps the limit it was stored with, so a late flush after a limit change does not rewrite
+    it."""
 
     if not rows:
         return 0
-    limits = limits_by_account(list({row["account"] for row in rows}), cluster)
-    rows = [row for row in rows if row["account"] in limits]  # another cluster's, or deleted
+    limits = limits_by_account(list({row["account"] for row in rows}))
+    rows = [row for row in rows if row["account"] in limits]  # deleted meanwhile
     if not rows:
         return 0
-    # One lock order for every request, so two nodes reporting the same accounts do not deadlock.
+    # One lock order for every writer, so two flushes of the same accounts do not deadlock.
     rows.sort(key=lambda row: (row["account"], row["period"]))
     now = frappe.utils.now()
     user = frappe.session.user
@@ -179,13 +179,12 @@ def upsert_usage(rows: list[dict], cluster: str) -> int:
     return len(rows)
 
 
-def limits_by_account(accounts: list[str], cluster: str) -> dict[str, dict[str, int]]:
-    """``{account: {"d": daily, "m": monthly}}`` of the cluster's accounts, keyed like the first
-    letter of a period."""
+def limits_by_account(accounts: list[str]) -> dict[str, dict[str, int]]:
+    """``{account: {"d": daily, "m": monthly}}``, keyed like the first letter of a period."""
 
     rows = frappe.get_all(
         "Mail Account",
-        filters={"cluster": cluster, "name": ("in", accounts)},
+        filters={"name": ("in", accounts)},
         fields=["name", "daily_send_limit", "monthly_send_limit"],
     )
     return {row.name: {"d": row.daily_send_limit, "m": row.monthly_send_limit} for row in rows}

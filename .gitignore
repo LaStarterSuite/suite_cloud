@@ -56,7 +56,3 @@ jspm_packages/
 
 # Tooling
 .ruff_cache/
-
-# Go agent build output
-agent/suite-cloud-agent
-agent/dist/

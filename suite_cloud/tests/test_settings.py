@@ -123,10 +123,10 @@ class TestSuiteCloudSettings(IntegrationTestCase):
             frappe.db.exists("Singles", {"doctype": patch.SETTINGS, "field": "agent_max_attempts"})
         )
 
-    def test_agent_settings_stay_within_what_the_agent_accepts(self) -> None:
-        from suite_cloud.suite_cloud.doctype.suite_cloud_settings.suite_cloud_settings import AGENT_RANGES
+    def test_telemetry_settings_stay_within_their_ranges(self) -> None:
+        from suite_cloud.suite_cloud.doctype.suite_cloud_settings.suite_cloud_settings import TELEMETRY_RANGES
 
-        for field, (low, high) in AGENT_RANGES.items():
+        for field, (low, high) in TELEMETRY_RANGES.items():
             for value in (low - 1, high + 1):
                 with self.subTest(field=field, value=value):
                     settings = frappe.get_single("Suite Cloud Settings")

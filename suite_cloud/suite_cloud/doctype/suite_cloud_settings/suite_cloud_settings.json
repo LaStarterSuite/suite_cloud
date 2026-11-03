@@ -72,18 +72,13 @@
   "dkim_section",
   "sign_with_ed25519",
   "agent_telemetry_tab",
-  "agent_section",
-  "agent_requests_per_minute",
-  "column_break_agent",
-  "agent_built_version",
-  "agent_built_at",
-  "agent_build_error",
   "telemetry_section",
   "enable_telemetry",
   "column_break_telemetry",
   "telemetry_retention_days",
   "metrics_push_interval_seconds",
   "webhook_discard_after_minutes",
+  "agent_requests_per_minute",
   "telemetry_alerts_section",
   "telemetry_alert_recipients",
   "column_break_telemetry_alerts",
@@ -521,22 +516,14 @@
   {
    "fieldname": "agent_telemetry_tab",
    "fieldtype": "Tab Break",
-   "label": "Agent & Telemetry"
-  },
-  {
-   "collapsible": 1,
-   "collapsible_depends_on": "eval:doc.enable_telemetry || doc.agent_build_error",
-   "description": "The agent runs on each Stalwart node. It enforces the sending limits of Mail Accounts.",
-   "fieldname": "agent_section",
-   "fieldtype": "Section Break",
-   "label": "Agent"
+   "label": "Telemetry"
   },
   {
    "default": "300",
-   "description": "Per server: Stalwart's webhook and metrics pushes and the agent's sending-limit calls together.",
+   "description": "Per server: Stalwart's webhook and metrics pushes together.",
    "fieldname": "agent_requests_per_minute",
    "fieldtype": "Int",
-   "label": "Agent Requests per Minute",
+   "label": "Server Requests per Minute",
    "reqd": 1
   },
   {
@@ -556,30 +543,6 @@
    "reqd": 1
   },
   {
-   "fieldname": "column_break_agent",
-   "fieldtype": "Column Break"
-  },
-  {
-   "description": "Version that provisioning installs.",
-   "fieldname": "agent_built_version",
-   "fieldtype": "Data",
-   "label": "Built Agent Version",
-   "read_only": 1
-  },
-  {
-   "fieldname": "agent_built_at",
-   "fieldtype": "Datetime",
-   "label": "Built At",
-   "read_only": 1
-  },
-  {
-   "depends_on": "eval:doc.agent_build_error",
-   "fieldname": "agent_build_error",
-   "fieldtype": "Small Text",
-   "label": "Last Build Error",
-   "read_only": 1
-  },
-  {
    "description": "Stalwart pushes its events and metrics to the telemetry API. A loader copies them into Insights.",
    "fieldname": "telemetry_section",
    "fieldtype": "Section Break",
@@ -587,7 +550,7 @@
   },
   {
    "default": "1",
-   "description": "Stalwart pushes events and metrics, and the agent runs on each Stalwart node. Changing it queues a job on each server.",
+   "description": "Stalwart pushes events and metrics. Changing it queues a job on each server.",
    "fieldname": "enable_telemetry",
    "fieldtype": "Check",
    "label": "Enable Telemetry"
@@ -642,7 +605,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-02 16:00:00.000000",
+ "modified": "2026-11-03 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Cloud Settings",

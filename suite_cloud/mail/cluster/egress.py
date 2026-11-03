@@ -507,7 +507,7 @@ def upgrade_gateway(gateway: Document) -> Document:
 
 def build_gateway_variables(context: dict) -> dict:
     from suite_cloud.mail.cluster.bootstrap import SECRET_VARIABLES
-    from suite_cloud.telemetry.agent.deploy import agent_variables
+    from suite_cloud.telemetry.install import telemetry_variables
     from suite_cloud.utils import get_config
 
     gateway = frappe.get_doc("Egress Gateway", context["gateway"])
@@ -545,14 +545,12 @@ def build_gateway_variables(context: dict) -> dict:
             *plan.secret_strings(recovery_plan),
         ],
     }
-    agent = agent_variables(gateway, context)
-    variables["__secret_values__"] += agent.pop("__secret_values__")
-    variables.update(agent)
+    variables.update(telemetry_variables(context))
     return variables
 
 
 def after_gateway_provision(gateway: Document, job: Document) -> None:
-    from suite_cloud.telemetry.agent.deploy import mark_token_installed
+    from suite_cloud.telemetry.install import mark_token_installed
 
     mark_token_installed(gateway)  # while the gateway is not running yet, so the push follows no change
     gateway.db_set(

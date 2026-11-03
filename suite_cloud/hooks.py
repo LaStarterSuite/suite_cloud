@@ -47,6 +47,7 @@ doc_events = {"User": {"validate": f"{PERMISSIONS}.keep_owner_role"}}
 # ============================================================================
 scheduler_events = {
     "cron": {
+        "* * * * *": ["suite_cloud.mail.sending_limits.flush_usage"],
         "*/5 * * * *": [
             "suite_cloud.suite_cloud.doctype.server_job.server_job.retry_failed_jobs",
             "suite_cloud.mail.doctype.stalwart_node.stalwart_node.poll_pending_nodes",

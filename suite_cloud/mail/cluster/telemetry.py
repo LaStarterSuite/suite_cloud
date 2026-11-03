@@ -14,7 +14,6 @@ from frappe.utils import cint, get_url
 
 from suite_cloud.mail.cluster.plan import TELEMETRY_TOKEN_VARIABLE, as_set
 from suite_cloud.telemetry import ERROR_EVENTS, WARN_EVENTS, WEBHOOK_EVENTS
-from suite_cloud.telemetry.agent.build import is_telemetry_enabled
 from suite_cloud.utils import get_config
 
 if TYPE_CHECKING:
@@ -62,6 +61,8 @@ def get_owner(server: Document) -> Document:
 
 def is_push_enabled(owner: Document) -> bool:
     """Telemetry is on and every server running the owner's plan has its token installed."""
+
+    from suite_cloud.telemetry.install import is_telemetry_enabled  # it builds on this module
 
     if not is_telemetry_enabled():
         return False
@@ -138,4 +139,10 @@ def bearer_auth() -> dict:
 
 
 def api_url(method: str) -> str:
-    return f"{get_config('public_url') or get_url()}{API_METHOD}{method}"
+    return f"{public_url()}{API_METHOD}{method}"
+
+
+def public_url() -> str:
+    """Where Stalwart reaches Suite Cloud."""
+
+    return get_config("public_url") or get_url()

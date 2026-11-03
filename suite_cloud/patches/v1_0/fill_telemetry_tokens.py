@@ -5,8 +5,8 @@ SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")
 
 
 def execute() -> None:
-    """Stalwart sends each server's own telemetry token. Upgrade Agents on each cluster installs
-    the tokens and switches Stalwart's push on."""
+    """Stalwart sends each server's own telemetry token. Install Telemetry Tokens on each cluster
+    installs the tokens and switches Stalwart's push on."""
 
     for doctype in SERVER_DOCTYPES:
         for name in frappe.get_all(doctype, filters={"telemetry_key": ("is", "not set")}, pluck="name"):

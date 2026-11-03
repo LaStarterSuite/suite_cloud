@@ -35,7 +35,6 @@ CONFIG_KEYS = (
     "telemetry_errors_per_hour",
     "metrics_push_interval_seconds",
     "webhook_discard_after_minutes",
-    "agent_built_version",
     "central_url",
     "central_team",
     "central_api_key",

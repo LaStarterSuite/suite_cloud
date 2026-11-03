@@ -10,6 +10,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 from redis.exceptions import LockNotOwnedError
 
+from suite_cloud.mail import sending_limits
 from suite_cloud.mail.cluster import bootstrap, dns, egress, naming, plan, push, reconcile
 from suite_cloud.mail.stalwart import forget_sessions, get_admin_client, get_client
 from suite_cloud.mail.stalwart.credentials import Credential
@@ -38,8 +39,6 @@ class StalwartCluster(Document):
 
         acme_contact_email: DF.Data | None
         acme_directory_url: DF.Data | None
-        agent_key: DF.Data | None
-        agent_secret: DF.Password | None
         admin_password: DF.Password | None
         admin_username: DF.Data | None
         api_key: DF.Password | None
@@ -87,9 +86,6 @@ class StalwartCluster(Document):
             self.admin_password = frappe.generate_hash(length=32)
         if not self.quota_hook_token:
             self.quota_hook_token = frappe.generate_hash(length=32)
-        self.agent_key = self.agent_key or frappe.generate_hash(length=20)
-        if not self.agent_secret:
-            self.agent_secret = frappe.generate_hash(length=40)
         self.relay_username = self.relay_username or "relay"
         if not self.relay_password:
             self.relay_password = frappe.generate_hash(length=32)
@@ -116,7 +112,7 @@ class StalwartCluster(Document):
 
     def validate_send_limits(self) -> None:
         """The max limits cap every account and tenant default, and the daily one is also the
-        server's own cap while the Agents are down, so neither is ever off."""
+        server's own cap while Suite Cloud does not answer, so neither is ever off."""
 
         for field in ("max_daily_send_limit", "max_monthly_send_limit"):
             if cint(self.get(field)) < 1:
@@ -126,6 +122,7 @@ class StalwartCluster(Document):
         dns.sync_spf_record(self)
 
     def on_update(self) -> None:
+        sending_limits.clear_token_hash_after_commit(self.name)
         before = self.get_doc_before_save()
         if not before:
             return
@@ -255,12 +252,6 @@ class StalwartCluster(Document):
     def get_client(self):
         return get_client(self)
 
-    @property
-    def agent_token(self) -> str:
-        """The bearer token the cluster's Agents send to Suite Cloud: ``<agent key>:<agent secret>``."""
-
-        return f"{self.agent_key}:{self.get_password('agent_secret')}"
-
     def get_admin_client(self):
         return get_admin_client(self)
 
@@ -375,28 +366,14 @@ class StalwartCluster(Document):
         return [bootstrap.upgrade_node(node).name for node in self.get_nodes(("Active",))]
 
     @frappe.whitelist()
-    def upgrade_agents(self) -> list[str]:
-        """Installs the telemetry token and the built Suite Cloud Agent on every active or draining
-        node and every active gateway, and switches Stalwart's push on once all have the token."""
+    def install_telemetry_tokens(self) -> list[str]:
+        """Installs the telemetry token on every active or draining node and every active gateway,
+        and switches Stalwart's push on once all have it."""
 
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.deploy import upgrade_agents
+        from suite_cloud.telemetry.install import install_telemetry_tokens
 
-        return upgrade_agents(self)
-
-    @frappe.whitelist()
-    def rotate_agent_secret(self) -> list[str]:
-        """Replaces the Agent Secret and reinstalls the cluster's Agents with it. An Agent not yet
-        reinstalled is refused and retries, so it loses nothing."""
-
-        frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.build import is_telemetry_enabled
-        from suite_cloud.telemetry.agent.deploy import upgrade_agents
-
-        self.reload()  # the form sends its unsaved edits too; only the secret is saved
-        self.agent_secret = frappe.generate_hash(length=40)
-        self.save(ignore_permissions=True)
-        return upgrade_agents(self) if is_telemetry_enabled() else []
+        return install_telemetry_tokens(self)
 
 
 def on_doctype_update() -> None:

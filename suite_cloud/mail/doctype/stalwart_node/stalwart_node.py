@@ -210,28 +210,18 @@ class StalwartNode(Document):
         return bootstrap.upgrade_node(self).name
 
     @frappe.whitelist()
-    def install_agent(self) -> str:
+    def install_telemetry_token(self) -> str:
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.deploy import install_agent
+        from suite_cloud.telemetry.install import install_telemetry
 
-        return install_agent(self).name
-
-    @frappe.whitelist()
-    def show_agent_config(self) -> dict:
-        """The agent's config.json as the next Install Agent writes it, secrets masked."""
-
-        frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.build import is_telemetry_enabled
-        from suite_cloud.telemetry.agent.deploy import masked_agent_config
-
-        return {"config": masked_agent_config(self), "telemetry_enabled": is_telemetry_enabled()}
+        return install_telemetry(self).name
 
     @frappe.whitelist()
     def rotate_telemetry_token(self) -> str | None:
         """A new telemetry secret; a job writes it to stalwart.env and restarts Stalwart."""
 
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.agent.deploy import rotate_telemetry_token
+        from suite_cloud.telemetry.install import rotate_telemetry_token
 
         return rotate_telemetry_token(self)
 
@@ -277,14 +267,14 @@ class StalwartNode(Document):
     def after_upgrade_failed(self, job: Document) -> None:
         self.set_status("Failed", job.error_log)
 
-    def after_install_agent(self, job: Document) -> None:
-        from suite_cloud.telemetry.agent.deploy import mark_token_installed
+    def after_install_telemetry(self, job: Document) -> None:
+        from suite_cloud.telemetry.install import mark_token_installed
 
         mark_token_installed(self)
 
 
 def on_doctype_update() -> None:
-    """Every telemetry batch and sending-limit call looks its node up by cluster and address."""
+    """Every telemetry batch looks its node up by cluster and address."""
 
     frappe.db.add_index("Stalwart Node", ["cluster", "ipv4_address"])
 

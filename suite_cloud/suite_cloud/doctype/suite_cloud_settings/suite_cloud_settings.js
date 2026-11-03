@@ -10,18 +10,7 @@ frappe.ui.form.on('Suite Cloud Settings', {
 	central_api_key: forget_central_teams,
 	central_api_secret: forget_central_teams,
 
-	onload(frm) {
-		frappe.realtime.on('suite_cloud_agent_build', (data) => {
-			frm.reload_doc()
-			frappe.show_alert({
-				message: data.error ? __('Agent build failed: {0}', [data.error]) : __('Agent {0} built.', [data.version]),
-				indicator: data.error ? 'red' : 'green',
-			})
-		})
-	},
-
 	refresh(frm) {
-		frm.add_custom_button(__('Build Agent'), () => build_agent(frm), __('Telemetry'))
 		// Asked when the picker is used, not on every load: Central may be slow or unset.
 		frm.fields_dict.central_team.$input.off('focus.central').on('focus.central', () => load_central_teams(frm))
 		frm.add_custom_button(__('Test Central Connection'), () => test_central_connection(frm), __('Frappe Cloud'))
@@ -61,15 +50,6 @@ function test_central_connection(frm) {
 			title: __('Central connection works'),
 			indicator: 'green',
 			message: `<pre>${frappe.utils.escape_html(JSON.stringify(r.message, null, 2))}</pre>`,
-		}),
-	)
-}
-
-function build_agent(frm) {
-	frm.call({ doc: frm.doc, method: 'build_agent', freeze: true, freeze_message: __('Queueing the build...') }).then((r) =>
-		frappe.show_alert({
-			message: r.message.queued ? __('Building agent {0}.', [r.message.version]) : __('A build is already running.'),
-			indicator: r.message.queued ? 'green' : 'orange',
 		}),
 	)
 }
