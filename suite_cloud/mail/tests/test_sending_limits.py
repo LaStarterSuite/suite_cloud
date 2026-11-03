@@ -385,10 +385,12 @@ class TestTenantSendLimits(SendingLimitsTestCase):
 
     def test_tenants_read_an_account_s_daily_history(self) -> None:
         now = self.now
-        today, two_days_ago, long_ago = (now - timedelta(days=days) for days in (0, 2, 40))
+        # The window's first day is six days back, which some dates put in the previous month.
+        today, two_days_ago, first_day, long_ago = (now - timedelta(days=days) for days in (0, 2, 6, 40))
         # A future row, which the usage API never stores, stays out of the answer too.
         future = now + timedelta(days=40)
-        periods = {*periods_at(today), *periods_at(two_days_ago), *periods_at(long_ago), *periods_at(future)}
+        moments = (today, two_days_ago, first_day, long_ago, future)
+        periods = {period for moment in moments for period in periods_at(moment)}
         upsert_usage(
             [{"account": "alice@acme.com", "period": period, "sent": 9, "refused": 1} for period in periods],
             self.cluster.name,
@@ -396,12 +398,13 @@ class TestTenantSendLimits(SendingLimitsTestCase):
 
         history = accounts.get_send_usage("alice@acme.com", days=7)
         self.assertEqual(
-            [day["date"] for day in history["days"]], [f"{today:%Y-%m-%d}", f"{two_days_ago:%Y-%m-%d}"]
+            [day["date"] for day in history["days"]],
+            [f"{moment:%Y-%m-%d}" for moment in (today, two_days_ago, first_day)],
         )
         self.assertEqual(
             history["days"][0], {"date": f"{today:%Y-%m-%d}", "sent": 9, "refused": 1, "limit": 100}
         )
-        months = {f"{moment:%Y-%m}" for moment in (today, now - timedelta(days=6))}
+        months = {f"{moment:%Y-%m}" for moment in (today, first_day)}
         self.assertEqual({month["month"] for month in history["months"]}, months)
 
         self.act_as(self.other)
