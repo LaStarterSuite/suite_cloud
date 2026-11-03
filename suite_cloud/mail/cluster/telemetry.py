@@ -27,6 +27,8 @@ WEBHOOK_TIMEOUT_MS = 30000
 OTLP_TIMEOUT_MS = 10000
 DEFAULT_DISCARD_AFTER_MINUTES = 10
 DEFAULT_PUSH_INTERVAL_SECONDS = 60
+# WebHook has no description, and its URL follows the Public URL, so this header names the stream.
+STREAM_HEADER = "X-Suite-Cloud-Stream"
 
 
 def fill_token(server: Document) -> None:
@@ -86,7 +88,7 @@ def get_operations(owner: Document) -> list[dict]:
         "prometheus": {"@type": "Disabled"},
     }
     return [
-        {"@type": "upsert", "object": "WebHook", "matchOn": ["url"], "value": webhooks},
+        {"@type": "upsert", "object": "WebHook", "matchOn": ["httpHeaders"], "value": webhooks},
         {"@type": "update", "object": "Metrics", "value": metrics},
     ]
 
@@ -104,7 +106,7 @@ def webhook(stream: str, level: str, events: tuple[str, ...], enabled: bool) -> 
         "events": as_set(events),
         "eventsPolicy": "include",
         "httpAuth": bearer_auth(),
-        "httpHeaders": {},
+        "httpHeaders": {STREAM_HEADER: stream},
         "signatureKey": {"@type": "None"},
         "throttle": WEBHOOK_THROTTLE_MS,
         "timeout": WEBHOOK_TIMEOUT_MS,

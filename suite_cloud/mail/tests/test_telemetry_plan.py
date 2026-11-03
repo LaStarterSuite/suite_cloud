@@ -5,7 +5,9 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from suite_cloud.mail.cluster import egress, plan, telemetry
-from suite_cloud.mail.tests.fixtures import make_cluster, make_node
+from suite_cloud.mail.stalwart import forget_sessions
+from suite_cloud.mail.tests.fake_stalwart import FakeStalwart
+from suite_cloud.mail.tests.fixtures import activate_cluster, clear_request_cache, make_cluster, make_node
 from suite_cloud.telemetry import ERROR_EVENTS, WARN_EVENTS, WEBHOOK_EVENTS
 from suite_cloud.tests.fixtures import configure_settings
 
@@ -38,7 +40,8 @@ class TestTelemetryPlan(IntegrationTestCase):
         self.node.db_set("telemetry_token_installed", 1)
         make_node(self.cluster, ipv4="203.0.113.11")  # pending: not running, so it does not count
         on = by_object(plan.cluster_plan(self.cluster))
-        self.assertEqual(on["WebHook"]["matchOn"], ["url"])
+        # The URL follows the Public URL, so a WebHook is found by its stream header instead.
+        self.assertEqual(on["WebHook"]["matchOn"], ["httpHeaders"])
         events, errors, warnings = (
             on["WebHook"]["value"]["telemetry-events"],
             on["WebHook"]["value"]["telemetry-errors"],
@@ -116,3 +119,22 @@ class TestTelemetryPlan(IntegrationTestCase):
         rendered = plan.cluster_plan(self.cluster)
         self.assertNotIn(self.node.get_password("telemetry_secret"), plan.to_ndjson(rendered))
         self.assertEqual(plan.marker(rendered), plan.marker(plan.cluster_plan(self.cluster)))
+
+    def test_a_new_public_url_moves_the_webhooks_instead_of_adding_more(self) -> None:
+        self.cluster.reload()
+        cluster = activate_cluster(self.cluster)
+        fake = FakeStalwart(base_url=cluster.base_url, admin_password=cluster.get_password("admin_password"))
+        fake.add_token("test-token")
+        with fake.install():
+            forget_sessions(cluster)
+            clear_request_cache()
+            webhooks = lambda: telemetry.get_operations(cluster)[:1]  # noqa: E731
+            cluster.get_client().apply(webhooks())
+            configure_settings(public_url="https://moved.example.test")
+            cluster.get_client().apply(webhooks())
+
+        base = "https://moved.example.test/api/v2/method/suite_cloud.api.telemetry.webhook"
+        self.assertEqual(
+            sorted(hook["url"] for hook in fake.objects["WebHook"].values()),
+            [f"{base}?stream={stream}" for stream in ("errors", "events", "warnings")],
+        )
