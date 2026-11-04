@@ -11,7 +11,7 @@ from suite_cloud.utils import clear_config_cache, validate_version
 # Set all together or not at all; the form marks them with the same rule (mandatory_depends_on).
 CENTRAL_CONNECTION_FIELDS = ("central_url", "central_team", "central_api_key", "central_api_secret")
 TELEMETRY_LIMITS = (
-    "agent_requests_per_minute",
+    "server_requests_per_minute",
     "telemetry_silence_minutes",
     "telemetry_errors_per_hour",
     "metrics_push_interval_seconds",
@@ -19,7 +19,7 @@ TELEMETRY_LIMITS = (
 )
 # What Stalwart is given for its pushes, and how many of them a server may make.
 TELEMETRY_RANGES = {
-    "agent_requests_per_minute": (1, 100000),
+    "server_requests_per_minute": (1, 100000),
     "metrics_push_interval_seconds": (5, 3600),
     "webhook_discard_after_minutes": (1, 10080),
 }

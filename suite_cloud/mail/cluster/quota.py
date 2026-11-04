@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 
 from frappe.utils import cint
 
-from suite_cloud.mail.cluster.plan import as_list, as_set, secret_value
+from suite_cloud.mail.cluster import server_token
+from suite_cloud.mail.cluster.plan import as_list, as_set
 from suite_cloud.mail.cluster.telemetry import public_url
 
 if TYPE_CHECKING:
@@ -20,6 +21,7 @@ AGENT_HOOK_URL = "http://127.0.0.1:8095/hooks/quota"  # the retired agent's hook
 BACKSTOP_DESCRIPTION = "suite-cloud-quota-backstop"
 DAY_MS = 86_400_000
 SIGNED_IN = {"match": as_list([{"if": "!is_empty(authenticated_as)", "then": "true"}]), "else": "false"}
+NEVER = {"match": as_list([]), "else": "false"}
 
 
 def cluster_operations(cluster: Document) -> list[dict]:
@@ -34,19 +36,17 @@ def retire_operation() -> dict:
 
 
 def hook_operation(cluster: Document) -> dict:
-    """One call per recipient at the RCPT stage, which JMAP sends pass through too. Stalwart
-    accepts the recipient when Suite Cloud fails or times out."""
+    """One call per recipient at the RCPT stage, which JMAP sends pass through too, with the
+    calling node's Suite Cloud token. Stalwart accepts the recipient when Suite Cloud fails or
+    times out. Off until every running node has its token, as the reload needs it."""
 
     hook = {
-        "enable": SIGNED_IN,
-        "url": f"{public_url()}{HOOK_METHOD}?cluster={cluster.name}",
+        "enable": SIGNED_IN if server_token.has_every_token(cluster) else NEVER,
+        "url": f"{public_url()}{HOOK_METHOD}",
         "stages": as_set(["rcpt"]),
         "timeout": HOOK_TIMEOUT_MS,
         "tempFailOnError": False,
-        "httpAuth": {
-            "@type": "Bearer",
-            "bearerToken": secret_value(cluster.get_password("quota_hook_token")),
-        },
+        "httpAuth": server_token.bearer_auth(),
         "httpHeaders": {HOOK_HEADER: "sending-limits"},
     }
     return {

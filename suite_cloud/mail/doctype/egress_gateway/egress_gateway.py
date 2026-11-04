@@ -6,12 +6,12 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, now
 
-from suite_cloud.mail.cluster import dns, egress, naming, plan, telemetry
+from suite_cloud.mail.cluster import dns, egress, naming, plan, server_token
 from suite_cloud.mail.doctype.stalwart_node.stalwart_node import validate_ip
 from suite_cloud.mail.stalwart import get_admin_client, get_client
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
-from suite_cloud.telemetry.install import mark_token_installed, rotate_telemetry_token
+from suite_cloud.telemetry.install import mark_token_installed, rotate_token
 from suite_cloud.utils import dkim_algorithms, get_config, log_exception, validate_version
 
 
@@ -43,9 +43,9 @@ class EgressGateway(Document):
         ssh_user: DF.Data | None
         ssh_verified: DF.Check
         stalwart_version: DF.Data | None
-        telemetry_key: DF.Data | None
-        telemetry_secret: DF.Password | None
-        telemetry_token_installed: DF.Check
+        suite_cloud_key: DF.Data | None
+        suite_cloud_secret: DF.Password | None
+        suite_cloud_token_installed: DF.Check
         title: DF.Data | None
         status: DF.Literal["Pending", "Provisioning", "Provisioned", "Active", "Failed", "Disabled"]
     # end: auto-generated types
@@ -61,7 +61,7 @@ class EgressGateway(Document):
         self.admin_username = self.admin_username or "admin"
         if not self.admin_password:
             self.admin_password = frappe.generate_hash(length=32)
-        telemetry.fill_token(self)
+        server_token.fill_token(self)
         if not self.data_store:
             self.data_store = self.create_local_store().name
 
@@ -94,6 +94,7 @@ class EgressGateway(Document):
         dns.sync_gateway_records(self)
 
     def on_update(self) -> None:
+        server_token.clear_server_after_commit(self)
         before = self.get_doc_before_save()
         if before and before.ipv4_address != self.ipv4_address:
             dns.sync_gateway_records(self)
@@ -108,6 +109,7 @@ class EgressGateway(Document):
         if frappe.db.exists("Egress IP Pool Address", {"gateway": self.name}):
             frappe.throw(_("Remove this gateway's addresses from every pool first."))
         dns.delete_gateway_records(self)
+        server_token.clear_server_after_commit(self)
 
     # --- helpers ------------------------------------------------------------------
 
@@ -250,11 +252,11 @@ class EgressGateway(Document):
         return egress.upgrade_gateway(self).name
 
     @frappe.whitelist()
-    def rotate_telemetry_token(self) -> str | None:
-        """A new telemetry secret; a job writes it to stalwart.env and restarts Stalwart."""
+    def rotate_suite_cloud_token(self) -> str | None:
+        """A new Suite Cloud secret; a job writes it to stalwart.env and restarts Stalwart."""
 
         frappe.only_for("System Manager")
-        return rotate_telemetry_token(self)
+        return rotate_token(self)
 
     @frappe.whitelist()
     def replace_dkim_keys(self) -> None:
@@ -281,7 +283,7 @@ class EgressGateway(Document):
         egress.check_gateway(self)
         mark_token_installed(self)  # the upgrade wrote stalwart.env
 
-    def after_install_telemetry(self, job: Document) -> None:
+    def after_install_token(self, job: Document) -> None:
         mark_token_installed(self)
 
     def after_upgrade_failed(self, job: Document) -> None:

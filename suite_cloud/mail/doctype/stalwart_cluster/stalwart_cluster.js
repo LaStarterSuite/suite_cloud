@@ -33,7 +33,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 			frm.add_custom_button(__('Rotate API Key'), () => frm.trigger('rotate_api_key'), __('Access'))
 			frm.add_custom_button(__('Replace DKIM Keys'), () => frm.trigger('replace_dkim_keys'), __('Access'))
 			frm.add_custom_button(__('Upgrade Nodes'), () => frm.trigger('upgrade_nodes'), __('Nodes'))
-			frm.add_custom_button(__('Install Telemetry Tokens'), () => frm.trigger('install_telemetry_tokens'), __('Nodes'))
+			frm.add_custom_button(__('Install Suite Cloud Tokens'), () => frm.trigger('install_suite_cloud_tokens'), __('Nodes'))
 		}
 		if (frm.doc.status === 'Bootstrapping') {
 			frm.add_custom_button(__('Finish Bootstrap'), () => frm.trigger('finish_bootstrap'), __('Nodes'))
@@ -156,9 +156,9 @@ frappe.ui.form.on('Stalwart Cluster', {
 		})
 	},
 
-	install_telemetry_tokens(frm) {
-		frappe.confirm(__('Install the telemetry token on every active or draining node and every active gateway? Stalwart restarts on a server whose token changed, and on every server once all of them have it, to start the metrics push.'), () => {
-			frm.events.call(frm, 'install_telemetry_tokens', {}, __('Queueing token installs...'))
+	install_suite_cloud_tokens(frm) {
+		frappe.confirm(__('Install the Suite Cloud token on every active or draining node and every active gateway? Stalwart restarts on a server whose token changed. Once all of them have it, the config is pushed, and Stalwart restarts on every server to start the metrics push while telemetry is on.'), () => {
+			frm.events.call(frm, 'install_suite_cloud_tokens', {}, __('Queueing token installs...'))
 		})
 	},
 

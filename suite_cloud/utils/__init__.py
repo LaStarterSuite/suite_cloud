@@ -29,7 +29,7 @@ CONFIG_KEYS = (
     "send_usage_retention_days",
     "enable_telemetry",
     "telemetry_retention_days",
-    "agent_requests_per_minute",
+    "server_requests_per_minute",
     "telemetry_alert_recipients",
     "telemetry_silence_minutes",
     "telemetry_errors_per_hour",

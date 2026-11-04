@@ -56,9 +56,8 @@
   "relay_password",
   "sending_limits_section",
   "max_daily_send_limit",
-  "max_monthly_send_limit",
   "column_break_sending_limits",
-  "quota_hook_token",
+  "max_monthly_send_limit",
   "config_tab",
   "bootstrap_node",
   "config_version",
@@ -411,14 +410,6 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Generated on save. Stalwart's sending-limit hook sends it to Suite Cloud.",
-   "fieldname": "quota_hook_token",
-   "fieldtype": "Password",
-   "label": "Quota Hook Token",
-   "no_copy": 1,
-   "read_only": 1
-  },
-  {
    "fieldname": "config_tab",
    "fieldtype": "Tab Break",
    "label": "Configuration"
@@ -520,7 +511,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-11-03 12:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

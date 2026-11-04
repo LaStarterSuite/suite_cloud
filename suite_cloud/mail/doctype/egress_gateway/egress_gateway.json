@@ -31,11 +31,11 @@
   "admin_password",
   "column_break_stalwart",
   "api_key",
-  "telemetry_section",
-  "telemetry_key",
-  "telemetry_secret",
-  "column_break_telemetry",
-  "telemetry_token_installed",
+  "suite_cloud_token_section",
+  "suite_cloud_key",
+  "suite_cloud_secret",
+  "column_break_suite_cloud_token",
+  "suite_cloud_token_installed",
   "state_section",
   "provisioned_at",
   "column_break_state",
@@ -223,36 +223,36 @@
   },
   {
    "collapsible": 1,
-   "fieldname": "telemetry_section",
+   "fieldname": "suite_cloud_token_section",
    "fieldtype": "Section Break",
-   "label": "Telemetry"
+   "label": "Suite Cloud Token"
   },
   {
-   "description": "Generated on save. Stalwart sends it with its secret, as SUITE_CLOUD_TELEMETRY_TOKEN, on every webhook and metrics push.",
-   "fieldname": "telemetry_key",
+   "description": "Generated on save. Stalwart sends it with its secret, as SUITE_CLOUD_TOKEN, on every request it makes to Suite Cloud.",
+   "fieldname": "suite_cloud_key",
    "fieldtype": "Data",
-   "label": "Telemetry Key",
+   "label": "Suite Cloud Key",
    "no_copy": 1,
    "read_only": 1,
    "unique": 1
   },
   {
-   "fieldname": "telemetry_secret",
+   "fieldname": "suite_cloud_secret",
    "fieldtype": "Password",
-   "label": "Telemetry Secret",
+   "label": "Suite Cloud Secret",
    "no_copy": 1,
    "read_only": 1
   },
   {
-   "fieldname": "column_break_telemetry",
+   "fieldname": "column_break_suite_cloud_token",
    "fieldtype": "Column Break"
   },
   {
    "default": "0",
    "description": "Set once a job wrote the token to stalwart.env and restarted Stalwart.",
-   "fieldname": "telemetry_token_installed",
+   "fieldname": "suite_cloud_token_installed",
    "fieldtype": "Check",
-   "label": "Telemetry Token Installed",
+   "label": "Suite Cloud Token Installed",
    "no_copy": 1,
    "read_only": 1
   },
@@ -316,7 +316,7 @@
    "link_fieldname": "managed_by"
   }
  ],
- "modified": "2026-11-02 16:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Egress Gateway",

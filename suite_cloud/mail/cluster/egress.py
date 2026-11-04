@@ -13,7 +13,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, get_datetime, now
 
-from suite_cloud.mail.cluster import dns, plan
+from suite_cloud.mail.cluster import dns, plan, server_token
 from suite_cloud.mail.cluster.push import recorded_failure, resync_cluster
 from suite_cloud.mail.stalwart import has_credentials
 from suite_cloud.mail.stalwart.directory import dkim_management_payload
@@ -465,7 +465,7 @@ def gateway_env(gateway: Document, mode: str = "normal") -> dict[str, str]:
     env = {"STALWART_HOSTNAME": gateway.hostname, "STALWART_PUBLIC_URL": gateway.base_url}
     if mode == "normal":
         env["STALWART_ROLE"] = GATEWAY_ROLE
-        env[plan.TELEMETRY_TOKEN_VARIABLE] = plan.get_telemetry_token(gateway)
+        env[server_token.TOKEN_VARIABLE] = server_token.get_token(gateway)
         return env
     env["STALWART_RECOVERY_ADMIN"] = f"{gateway.admin_username}:{gateway.get_password('admin_password')}"
     env["STALWART_RECOVERY_MODE_PORT"] = str(plan.BOOTSTRAP_PORT)
@@ -507,7 +507,7 @@ def upgrade_gateway(gateway: Document) -> Document:
 
 def build_gateway_variables(context: dict) -> dict:
     from suite_cloud.mail.cluster.bootstrap import SECRET_VARIABLES
-    from suite_cloud.telemetry.install import telemetry_variables
+    from suite_cloud.telemetry.install import token_variables
     from suite_cloud.utils import get_config
 
     gateway = frappe.get_doc("Egress Gateway", context["gateway"])
@@ -540,12 +540,12 @@ def build_gateway_variables(context: dict) -> dict:
         "__secret_keys__": list(SECRET_VARIABLES),
         "__secret_values__": [
             gateway.get_password("admin_password"),
-            plan.get_telemetry_token(gateway),
+            server_token.get_token(gateway),
             *plan.secret_strings(bootstrap_plan),
             *plan.secret_strings(recovery_plan),
         ],
     }
-    variables.update(telemetry_variables(context))
+    variables.update(token_variables(context))
     return variables
 
 

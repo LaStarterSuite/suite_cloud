@@ -1,5 +1,5 @@
 ---
-- name: Install the telemetry token
+- name: Install the Suite Cloud token
   hosts: all
   become: true
   gather_facts: false
@@ -29,7 +29,7 @@
       systemd:
         daemon_reload: true
 
-    # SUITE_CLOUD_TELEMETRY_TOKEN is read on start, by the WebHooks and the OTLP push.
+    # SUITE_CLOUD_TOKEN is read on start, by the WebHooks, the OTLP push and the sending-limit hook.
     - name: Write the runtime environment
       no_log: true
       copy:

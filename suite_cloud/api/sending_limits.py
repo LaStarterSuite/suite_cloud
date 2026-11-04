@@ -1,7 +1,7 @@
 """Stalwart's sending-limit hook: one call per recipient of a signed-in sender, at the RCPT stage.
 
-The URL names the cluster and the bearer is its Quota Hook Token, which the ``authenticate`` auth
-hook checks. The answer is Stalwart's own JSON, without Frappe's envelope.
+The bearer is the calling node's Suite Cloud token, which the ``authenticate`` auth hook checks; the
+node's cluster is the caller's. The answer is Stalwart's own JSON, without Frappe's envelope.
 """
 
 import json
@@ -25,7 +25,7 @@ def check(context: dict | None = None, envelope: dict | None = None) -> Response
     if not account or not (envelope or {}).get("to"):
         return answer(ACCEPT)
     try:
-        refusal = sending_limits.count_recipient(frappe.local.hook_cluster, account)
+        refusal = sending_limits.count_recipient(frappe.local.stalwart_server.cluster, account)
     except Exception:
         # One line per recipient while Redis is down, so a log rather than an Error Log each.
         frappe.logger("sending_limits").exception(f"Sending limit check failed for {account}")

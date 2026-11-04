@@ -7,12 +7,12 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, get_datetime, now
 
-from suite_cloud.mail.cluster import dns, plan
+from suite_cloud.mail.cluster import dns, plan, server_token
 from suite_cloud.mail.stalwart import forget_sessions, get_client, has_credentials
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.mail.stalwart.errors import StalwartError, StalwartUnauthorizedError
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
-from suite_cloud.telemetry.install import mark_token_installed, telemetry_variables
+from suite_cloud.telemetry.install import mark_token_installed, token_variables
 from suite_cloud.utils import get_config, log_error, log_exception
 
 if TYPE_CHECKING:
@@ -152,12 +152,12 @@ def build_node_variables(context: dict) -> dict:
         "__secret_keys__": list(SECRET_VARIABLES),
         "__secret_values__": [
             cluster.get_password("admin_password"),
-            plan.get_telemetry_token(node),
+            server_token.get_token(node),
             *plan.secret_strings(bootstrap_plan),
             *plan.secret_strings(recovery_plan),
         ],
     }
-    variables.update(telemetry_variables(context))
+    variables.update(token_variables(context))
     return variables
 
 

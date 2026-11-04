@@ -10,7 +10,6 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 from redis.exceptions import LockNotOwnedError
 
-from suite_cloud.mail import sending_limits
 from suite_cloud.mail.cluster import bootstrap, dns, egress, naming, plan, push, reconcile
 from suite_cloud.mail.stalwart import forget_sessions, get_admin_client, get_client
 from suite_cloud.mail.stalwart.credentials import Credential
@@ -62,7 +61,6 @@ class StalwartCluster(Document):
         last_config_sync_error: DF.SmallText | None
         max_daily_send_limit: DF.Int
         max_monthly_send_limit: DF.Int
-        quota_hook_token: DF.Password | None
         region: DF.Link
         relay_password: DF.Password | None
         relay_username: DF.Data | None
@@ -84,8 +82,6 @@ class StalwartCluster(Document):
         self.admin_username = self.admin_username or "admin"
         if not self.admin_password:
             self.admin_password = frappe.generate_hash(length=32)
-        if not self.quota_hook_token:
-            self.quota_hook_token = frappe.generate_hash(length=32)
         self.relay_username = self.relay_username or "relay"
         if not self.relay_password:
             self.relay_password = frappe.generate_hash(length=32)
@@ -122,7 +118,6 @@ class StalwartCluster(Document):
         dns.sync_spf_record(self)
 
     def on_update(self) -> None:
-        sending_limits.clear_token_hash_after_commit(self.name)
         before = self.get_doc_before_save()
         if not before:
             return
@@ -366,14 +361,14 @@ class StalwartCluster(Document):
         return [bootstrap.upgrade_node(node).name for node in self.get_nodes(("Active",))]
 
     @frappe.whitelist()
-    def install_telemetry_tokens(self) -> list[str]:
-        """Installs the telemetry token on every active or draining node and every active gateway,
-        and switches Stalwart's push on once all have it."""
+    def install_suite_cloud_tokens(self) -> list[str]:
+        """Installs the Suite Cloud token on every active or draining node and every active
+        gateway, and switches on what sends it once all have it."""
 
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.install import install_telemetry_tokens
+        from suite_cloud.telemetry.install import install_tokens
 
-        return install_telemetry_tokens(self)
+        return install_tokens(self)
 
 
 def on_doctype_update() -> None:

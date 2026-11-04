@@ -13,7 +13,7 @@ from suite_cloud.tests.fixtures import configure_settings
 
 TOKEN = {
     "@type": "Bearer",
-    "bearerToken": {"@type": "EnvironmentVariable", "variableName": "SUITE_CLOUD_TELEMETRY_TOKEN"},
+    "bearerToken": {"@type": "EnvironmentVariable", "variableName": "SUITE_CLOUD_TOKEN"},
 }
 
 
@@ -37,7 +37,7 @@ class TestTelemetryPlan(IntegrationTestCase):
         self.assertEqual(off["Metrics"]["value"]["openTelemetry"], {"@type": "Disabled"})
         self.assertEqual(off["Metrics"]["value"]["prometheus"], {"@type": "Disabled"})
 
-        self.node.db_set("telemetry_token_installed", 1)
+        self.node.db_set("suite_cloud_token_installed", 1)
         make_node(self.cluster, ipv4="203.0.113.11")  # pending: not running, so it does not count
         on = by_object(plan.cluster_plan(self.cluster))
         # The URL follows the Public URL, so a WebHook is found by its stream header instead.
@@ -86,7 +86,7 @@ class TestTelemetryPlan(IntegrationTestCase):
         # Another running node without its token turns it off again, as does the setting.
         make_node(self.cluster, ipv4="203.0.113.12").db_set("status", "Draining")
         self.assertFalse(telemetry.is_push_enabled(self.cluster))
-        frappe.db.set_value("Stalwart Node", {"cluster": self.cluster.name}, "telemetry_token_installed", 1)
+        frappe.db.set_value("Stalwart Node", {"cluster": self.cluster.name}, "suite_cloud_token_installed", 1)
         self.assertTrue(telemetry.is_push_enabled(self.cluster))
         configure_settings(enable_telemetry=0)
         self.assertFalse(telemetry.is_push_enabled(self.cluster))
@@ -101,7 +101,7 @@ class TestTelemetryPlan(IntegrationTestCase):
         self.assertFalse(
             by_object(egress.gateway_plan(gateway))["WebHook"]["value"]["telemetry-events"]["enable"]
         )
-        gateway.db_set("telemetry_token_installed", 1)
+        gateway.db_set("suite_cloud_token_installed", 1)
         self.assertTrue(
             by_object(egress.gateway_plan(gateway))["WebHook"]["value"]["telemetry-events"]["enable"]
         )
@@ -115,9 +115,9 @@ class TestTelemetryPlan(IntegrationTestCase):
         self.assertIn("metricsPush", role["tasks"]["taskTypes"])
 
     def test_the_token_variable_names_no_secret_in_the_plan(self) -> None:
-        self.node.db_set("telemetry_token_installed", 1)
+        self.node.db_set("suite_cloud_token_installed", 1)
         rendered = plan.cluster_plan(self.cluster)
-        self.assertNotIn(self.node.get_password("telemetry_secret"), plan.to_ndjson(rendered))
+        self.assertNotIn(self.node.get_password("suite_cloud_secret"), plan.to_ndjson(rendered))
         self.assertEqual(plan.marker(rendered), plan.marker(plan.cluster_plan(self.cluster)))
 
     def test_a_new_public_url_moves_the_webhooks_instead_of_adding_more(self) -> None:

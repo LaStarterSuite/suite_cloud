@@ -21,7 +21,7 @@ VARIABLES_BUILDERS = (
     "suite_cloud.mail.cluster.bootstrap.build_command_variables",
     "suite_cloud.mail.cluster.egress.build_gateway_variables",
 )
-CALLBACKS = ("after_provision", "after_upgrade", "after_install_telemetry")
+CALLBACKS = ("after_provision", "after_upgrade", "after_install_token")
 
 REDACTED = "***"
 
