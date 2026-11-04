@@ -34,7 +34,7 @@ The app has three modules, so one CODEOWNERS line can cover each product:
 | --- | --- | --- |
 | **Suite Cloud** | `suite_cloud/suite_cloud` | What every hosted product shares: DNS Zone, DNS Record, Server Job, Suite Tenant, Suite Cloud Settings, plus `provisioning` (Ansible over SSH) and `dns` (provider client, resolver). |
 | **Mail** | `suite_cloud/mail` | The mail product: Stalwart Store, Cluster, Node, Egress Gateway and IP Pool, the mail directory (Mail Domain, Mail Account, Mail Group, Mailing List), and the `stalwart`, `cluster` and `tenancy` packages. |
-| **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and `install`, which installs the telemetry tokens. |
+| **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and `install`, which installs each server's Suite Cloud token and rolls the telemetry push out. |
 | **Hosting** | `suite_cloud/hosting` | Suite sites on Frappe Cloud: Region, Virtual Machine, Suite Site, Suite Tenant Request, the `central` clients (Central, Pilot, the site's REST API) and the `machines`, `sites`, `domains` and `capacity` steps. |
 
 The tenant-facing API is split the same way: `suite_cloud.api.tenant` for what any product needs
@@ -117,8 +117,8 @@ contact email; everything else sits at permission level 1, for System Managers.
 Day-to-day buttons: **Drain** takes a node out of DNS before maintenance, **Upgrade Nodes** rolls a
 new Stalwart version out one node at a time (each node is drained first, except the last one in the
 cluster hostname's DNS, which the health check after the upgrade needs), **Sync Config** pushes the generated configuration
-again, **Check Drift** reports what differs from it without changing anything, and **Install Telemetry Tokens**
-installs each server's telemetry token; the cluster, node and gateway forms show when each server last
+again, **Check Drift** reports what differs from it without changing anything, and **Install Suite Cloud Tokens**
+installs each server's Suite Cloud token; the cluster, node and gateway forms show when each server last
 reported. Suite Cloud enforces the [sending limits](docs/sending-limits.md) of Mail Accounts through an
 MTA Hook in the cluster plan.
 
@@ -126,15 +126,15 @@ MTA Hook in the cluster plan.
 
 Stalwart pushes its own events and metrics to the [telemetry API](docs/api/telemetry.md). Three WebHooks send the events: one lists the events the dashboards read, one every other event Stalwart logs at error level, and one every other event it logs at warn level. OTLP sends the metrics every **Metrics Push Interval (Seconds)**. The cluster plan holds both, and the gateway plan holds its own.
 
-Each node and gateway has its own telemetry token, made with the record. Provisioning and upgrades write it to `/etc/stalwart/stalwart.env` as `SUITE_CLOUD_TELEMETRY_TOKEN`, and each request carries the token of the server that sent it. A config reload that names a variable a running server lacks fails. So the plan switches the push on only once every Provisioned, Active and Draining node of the cluster, or the gateway, has **Telemetry Token Installed**. Until then it writes the WebHooks switched off and OTLP disabled.
+Each node and gateway has its own Suite Cloud token, `<key>.<secret>`, made with the record. Provisioning and upgrades write it to `/etc/stalwart/stalwart.env` as `SUITE_CLOUD_TOKEN`. Stalwart sends it on every request it makes to Suite Cloud: the WebHooks, OTLP and the [sending-limit hook](docs/sending-limits.md). A config reload that names a variable a running server lacks fails. So the plan switches them on only once every Provisioned, Active and Draining node of the cluster, or the gateway, has **Suite Cloud Token Installed**. Until then it writes them switched off and OTLP disabled. The WebHooks and OTLP also need **Enable Telemetry**; the sending-limit hook does not.
 
 OTLP starts only when Stalwart starts. These jobs restart Stalwart:
 
-1. **Install Telemetry Tokens** on a cluster runs a job per Active or Draining node and Active gateway. Each job writes the token to `stalwart.env` and restarts Stalwart when the file changed.
-2. When the last server of the cluster, or the gateway, has its token, a job pushes the config and restarts Stalwart on each server once more.
-3. **Install Telemetry Tokens** on a cluster where every server has its token pushes and restarts again. Run it when step 2 failed. Its error shows on the cluster's form.
+1. **Install Suite Cloud Tokens** on a cluster runs a job per Active or Draining node and Active gateway. Each job writes the token to `stalwart.env` and restarts Stalwart when the file changed.
+2. When the last server of the cluster, or the gateway, has its token, a job pushes the config and, while telemetry is on, restarts Stalwart on each server once more.
+3. **Install Suite Cloud Tokens** on a cluster where every server has its token pushes and restarts again. Run it when step 2 failed. Its error shows on the cluster's form.
 
-The servers restart in parallel jobs, not one at a time. **Rotate Telemetry Token** on a node or gateway form makes a new secret and restarts Stalwart on that server. A change of the metrics interval or of **Public URL** takes effect after Install Telemetry Tokens. A Sync Config alone does not restart Stalwart.
+The servers restart in parallel jobs, not one at a time. **Rotate Suite Cloud Token** on a node or gateway form makes a new secret and restarts Stalwart on that server. A change of the metrics interval or of **Public URL** takes effect after Install Suite Cloud Tokens. A Sync Config alone does not restart Stalwart.
 
 ### Adopting a server that already has a directory
 
