@@ -7,23 +7,23 @@ Module `suite_cloud.api.telemetry`. Each Stalwart node and egress gateway pushes
 | `telemetry.webhook` | POST | Stalwart | Stages a batch of events |
 | `telemetry.otlp` | POST | Stalwart | Stages one OTLP metrics push |
 
-Stalwart's sending-limit hook, `suite_cloud.api.sending_limits.check`, goes through the same auth hook with its cluster's Quota Hook Token. See [Sending limits](../sending-limits.md).
+Stalwart's sending-limit hook, `suite_cloud.api.sending_limits.check`, goes through the same auth hook with the calling node's Suite Cloud token. See [Sending limits](../sending-limits.md).
 
 ## Authentication
 
-Every Stalwart Node and Egress Gateway has its own **Telemetry Key** and **Telemetry Secret**, made when the record is created. Provisioning writes them to the server's `/etc/stalwart/stalwart.env`:
+Every Stalwart Node and Egress Gateway has its own **Suite Cloud Key** and **Suite Cloud Secret**, made when the record is created. Provisioning writes them to the server's `/etc/stalwart/stalwart.env`:
 
 ```sh
-SUITE_CLOUD_TELEMETRY_TOKEN=<telemetry key>:<telemetry secret>
+SUITE_CLOUD_TOKEN=<key>.<secret>
 ```
 
-The WebHooks and the OTLP push read the variable on the server that sends, so each request names its one server:
+The WebHooks, the OTLP push and the sending-limit hook read the variable on the server that sends, so each request names its one server:
 
 ```http
-Authorization: Bearer <telemetry key>:<telemetry secret>
+Authorization: Bearer <key>.<secret>
 ```
 
-The token opens only `webhook` and `otlp`, and runs as a user without any role. The server record gives every row its `source` (`stalwart`), `host_ip` (the server's IPv4 address) and `hostname`. The request carries none of them. With **Enable Telemetry** off, every request gets a 401. **Rotate Telemetry Token** on a node or gateway form replaces the secret at once and queues a job that writes it to the server and restarts Stalwart. Until the job ends, Stalwart sends the old token, gets a 401 and tries again.
+The token opens only `webhook`, `otlp` and, for a node, the sending-limit hook, and runs as a user without any role. The server record gives every row its `source` (`stalwart`), `host_ip` (the server's IPv4 address) and `hostname`. The request carries none of them. With **Enable Telemetry** off, every `webhook` and `otlp` request gets a 401. **Rotate Suite Cloud Token** on a node or gateway form replaces the secret at once and queues a job that writes it to the server and restarts Stalwart. Until the job ends, Stalwart sends the old token, gets a 401 and tries again.
 
 ## WebHook
 
@@ -31,7 +31,7 @@ Stalwart sends every event waiting for a WebHook in one request, at most one req
 
 ```http
 POST /api/v2/method/suite_cloud.api.telemetry.webhook?stream=events
-Authorization: Bearer <telemetry key>:<telemetry secret>
+Authorization: Bearer <key>.<secret>
 Content-Type: application/json
 
 {"events": [{"id": "...", "createdAt": "2026-10-20T09:59:00Z", "type": "delivery.delivered", "data": {"queueId": 1234, "remoteIp": "198.51.100.7", "spanId": 42}}]}

@@ -123,8 +123,8 @@ class TestStalwartCluster(IntegrationTestCase):
                 "only reach .test hosts",
                 create_server_job,
                 node,
-                "install-telemetry.yml",
-                title="Install telemetry token",
+                "install-token.yml",
+                title="Install Suite Cloud token",
             )
         run.assert_not_called()
 
@@ -799,7 +799,7 @@ class TestStalwartCluster(IntegrationTestCase):
                 "STALWART_HOSTNAME": node.hostname,
                 "STALWART_PUBLIC_URL": cluster.base_url,
                 "STALWART_ROLE": "frontend",
-                "SUITE_CLOUD_TELEMETRY_TOKEN": f"{node.telemetry_key}:{node.get_password('telemetry_secret')}",
+                "SUITE_CLOUD_TOKEN": f"{node.suite_cloud_key}.{node.get_password('suite_cloud_secret')}",
             },
         )
         recovery = plan.node_env(node, "recovery")
@@ -807,7 +807,7 @@ class TestStalwartCluster(IntegrationTestCase):
         self.assertTrue(recovery["STALWART_RECOVERY_ADMIN"].startswith("admin:"))
         self.assertNotIn("STALWART_RECOVERY_MODE", plan.node_env(node, "bootstrap"))
         for mode in ("bootstrap", "recovery"):
-            self.assertNotIn("SUITE_CLOUD_TELEMETRY_TOKEN", plan.node_env(node, mode))
+            self.assertNotIn("SUITE_CLOUD_TOKEN", plan.node_env(node, mode))
         self.assertEqual(json.loads(frappe.as_json(plan.node_config(cluster)))["@type"], "PostgreSql")
         self.assertIn("EnvironmentFile=/etc/stalwart/stalwart.env", plan.systemd_unit())
 

@@ -3,7 +3,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from suite_cloud.mail.cluster import dns, egress, plan, push
+from suite_cloud.mail.cluster import dns, egress, plan, push, server_token
 from suite_cloud.mail.stalwart import forget_sessions
 from suite_cloud.mail.stalwart.errors import StalwartError
 from suite_cloud.mail.tests.fake_stalwart import FakeStalwart
@@ -423,9 +423,9 @@ class TestEgress(IntegrationTestCase):
         variables = egress.build_gateway_variables({"gateway": self.gateway.name})
         self.assertEqual(variables["wait_ports"], [443, 2525])
         self.assertIn("STALWART_ROLE=egress", variables["env_normal"])
-        self.assertIn(f"SUITE_CLOUD_TELEMETRY_TOKEN={self.gateway.telemetry_key}:", variables["env_normal"])
+        self.assertIn(f"SUITE_CLOUD_TOKEN={self.gateway.suite_cloud_key}.", variables["env_normal"])
         self.assertIn("env_normal", variables["__secret_keys__"])
-        self.assertIn(plan.get_telemetry_token(self.gateway), variables["__secret_values__"])
+        self.assertIn(server_token.get_token(self.gateway), variables["__secret_values__"])
         self.assertIn('"object":"SpamSettings"', variables["defaults_ndjson"])
         self.assertIn('"name":"egress"', variables["defaults_ndjson"])  # the role env_normal names
         self.assertNotIn('"name":"full"', variables["defaults_ndjson"])

@@ -78,7 +78,7 @@
   "telemetry_retention_days",
   "metrics_push_interval_seconds",
   "webhook_discard_after_minutes",
-  "agent_requests_per_minute",
+  "server_requests_per_minute",
   "telemetry_alerts_section",
   "telemetry_alert_recipients",
   "column_break_telemetry_alerts",
@@ -521,7 +521,7 @@
   {
    "default": "300",
    "description": "Per server: Stalwart's webhook and metrics pushes together.",
-   "fieldname": "agent_requests_per_minute",
+   "fieldname": "server_requests_per_minute",
    "fieldtype": "Int",
    "label": "Server Requests per Minute",
    "reqd": 1
@@ -605,7 +605,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-03 12:00:00.000000",
+ "modified": "2026-11-04 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Cloud Settings",

@@ -1,16 +1,14 @@
 """The telemetry API: Stalwart pushes its events and metrics, and asks about sending limits.
 
-Stalwart sends ``Authorization: Bearer <telemetry key>:<telemetry secret>``, the token of the one
-node or gateway that sent the request, to ``webhook`` and ``otlp``. The sending-limit hook
-(``suite_cloud.api.sending_limits``) sends its cluster's Quota Hook Token, the cluster named in the
-URL. The ``authenticate`` auth hook checks the token and runs the request as the telemetry user,
-which holds no role, so a token opens nothing but these methods. A batch is staged as one parquet
-file and acknowledged; the warehouse loads it later. The cache notes which host sent a batch last,
-for the status on the node forms.
+Stalwart sends ``Authorization: Bearer <key>.<secret>``, the Suite Cloud token of the one node or
+gateway that sent the request (``server_token``). ``webhook`` and ``otlp`` take any server's token
+while telemetry is on; the sending-limit hook (``suite_cloud.api.sending_limits``) takes a Stalwart
+Node's whatever telemetry is set to. The ``authenticate`` auth hook checks the token and runs the
+request as the telemetry user, which holds no role, so a token opens nothing but these methods. A
+batch is staged as one parquet file and acknowledged; the warehouse loads it later. The cache notes
+which host sent a batch last, for the status on the node forms.
 """
 
-import hashlib
-import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
@@ -18,12 +16,11 @@ from functools import wraps
 import frappe
 from frappe import _
 from frappe.utils import cint
-from frappe.utils.password import get_decrypted_password
 from google.protobuf.message import DecodeError
 from werkzeug.wrappers import Response
 
 from suite_cloud.api.tenant import InvalidInputError, assert_arguments, throttle
-from suite_cloud.mail import sending_limits
+from suite_cloud.mail.cluster import server_token
 from suite_cloud.telemetry import EVENTS, METRICS, TELEMETRY_USER
 from suite_cloud.telemetry.push import (
     STREAM_EVENTS,
@@ -41,12 +38,11 @@ HOOK_PATHS = ("/api/v2/method/suite_cloud.api.sending_limits.", "/api/method/sui
 DEFAULT_REQUESTS_PER_MINUTE = 300  # the settings' defaults, used until the site has them
 WEBHOOK_EVENT_LIMIT = 65536  # what one request may stage; Stalwart sends every waiting event at once
 SOURCE = "stalwart"
-SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")
 
 
 def authenticate() -> None:
-    """Frappe auth hook: a bearer token on the telemetry API is a server's telemetry token, and on
-    the sending-limit hook the named cluster's Quota Hook Token.
+    """Frappe auth hook: a bearer token on the telemetry API or the sending-limit hook is a
+    server's Suite Cloud token.
 
     Elsewhere a bearer token is Frappe's own OAuth business, so the hook leaves it alone.
     """
@@ -56,9 +52,8 @@ def authenticate() -> None:
     if scheme.lower() != "bearer" or not path.startswith(API_PATHS + HOOK_PATHS):
         return
 
-    is_hook = path.startswith(HOOK_PATHS)
-    caller = get_hook_cluster(token.strip()) if is_hook else get_telemetry_server(token.strip())
-    if not caller:
+    server = get_caller(token.strip(), is_hook=path.startswith(HOOK_PATHS))
+    if not server:
         request_ip = getattr(frappe.local, "request_ip", None)
         throttle(f"address:{request_ip or 'unknown'}")  # guessing secrets is paced like everything else
         raise frappe.AuthenticationError(_("Telemetry authentication failed."))
@@ -66,56 +61,30 @@ def authenticate() -> None:
     form_dict = frappe.local.form_dict
     frappe.set_user(TELEMETRY_USER)
     frappe.local.form_dict = form_dict  # set_user clears the request body Frappe already parsed
+    frappe.local.stalwart_server = server
+
+
+def get_caller(token: str, is_hook: bool) -> frappe._dict | None:
+    """The hook takes a Stalwart Node's token: the sending limits hold whether telemetry is on or
+    not. The telemetry API takes any server's, while telemetry is on."""
+
+    server = server_token.get_server(token)
+    if not server:
+        return None
     if is_hook:
-        frappe.local.hook_cluster = caller
-    else:
-        frappe.local.telemetry_server = caller
-
-
-def get_hook_cluster(token: str) -> str | None:
-    """The cluster named in the URL's ``cluster``, when ``token`` is its Quota Hook Token; None for
-    anything else. Telemetry being off does not matter: the sending limits hold regardless."""
-
-    cluster = frappe.request.args.get("cluster")
-    stored = cluster and sending_limits.get_token_hash(cluster)
-    given = hashlib.sha256(token.encode()).hexdigest()
-    if not stored or not secrets.compare_digest(stored, given):
-        return None
-    return cluster
-
-
-def get_telemetry_server(token: str) -> frappe._dict | None:
-    """The Stalwart Node or Egress Gateway whose telemetry key and secret make up
-    ``<key>:<secret>``, while telemetry is on; None for anything else."""
-
-    key, secret = split_token(token)
-    if not key:
-        return None
-    for doctype in SERVER_DOCTYPES:
-        fields = ["name", "ipv4_address", "hostname"]
-        if server := frappe.db.get_value(doctype, {"telemetry_key": key}, fields, as_dict=True):
-            stored = get_decrypted_password(doctype, server.name, "telemetry_secret", raise_exception=False)
-            if stored and secrets.compare_digest(stored, secret):
-                return frappe._dict(server, doctype=doctype)
-            return None
-    return None
-
-
-def split_token(token: str) -> tuple[str | None, str | None]:
-    key, separator, secret = token.partition(":")
-    if not (separator and key and secret and cint(get_config("enable_telemetry"))):
-        return None, None
-    return key, secret
+        return server if server.doctype == "Stalwart Node" else None
+    return server if cint(get_config("enable_telemetry")) else None
 
 
 def hook_api(fn: Callable) -> Callable:
-    """Only Stalwart, signed in with a cluster's Quota Hook Token, may call the method. It is not
+    """Only a Stalwart Node, signed in with its Suite Cloud token, may call the method. It is not
     throttled: a refused check would be an accepted recipient."""
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        if frappe.session.user != TELEMETRY_USER or not getattr(frappe.local, "hook_cluster", None):
-            frappe.throw(_("Only a Stalwart cluster may call this method."), frappe.PermissionError)
+        server = getattr(frappe.local, "stalwart_server", None)
+        if frappe.session.user != TELEMETRY_USER or not server or server.doctype != "Stalwart Node":
+            frappe.throw(_("Only a Stalwart node may call this method."), frappe.PermissionError)
         assert_arguments(fn, args, kwargs)
         return fn(*args, **kwargs)
 
@@ -124,15 +93,15 @@ def hook_api(fn: Callable) -> Callable:
 
 
 def push_api(fn: Callable) -> Callable:
-    """Only Stalwart, signed in with a server's telemetry token, may call the method. Each server
+    """Only Stalwart, signed in with a server's Suite Cloud token, may call the method. Each server
     is throttled on its own."""
 
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        server = getattr(frappe.local, "telemetry_server", None)
+        server = getattr(frappe.local, "stalwart_server", None)
         if frappe.session.user != TELEMETRY_USER or not server:
             frappe.throw(_("Only a Stalwart server may call this method."), frappe.PermissionError)
-        limit = get_limit("agent_requests_per_minute", DEFAULT_REQUESTS_PER_MINUTE)
+        limit = get_limit("server_requests_per_minute", DEFAULT_REQUESTS_PER_MINUTE)
         throttle(f"server:{server.ipv4_address}", limit)
         assert_arguments(fn, args, kwargs)
         return fn(*args, **kwargs)
@@ -156,7 +125,7 @@ def webhook(events: list) -> dict:
         frappe.throw(
             _("Send at most {0} events in one request.").format(WEBHOOK_EVENT_LIMIT), InvalidInputError
         )
-    server = frappe.local.telemetry_server
+    server = frappe.local.stalwart_server
     rows, problems = get_event_rows(events, stream)
     if problems:
         log_error(
@@ -176,7 +145,7 @@ def otlp() -> Response:
     """Stalwart's OTLP metrics push: an ``ExportMetricsServiceRequest`` in protobuf. Answers 200
     with an empty body, which Stalwart accepts."""
 
-    server = frappe.local.telemetry_server
+    server = frappe.local.stalwart_server
     try:
         body = frappe.request.get_data()
         rows, skipped = get_metric_rows(body)

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 import frappe
 
+from suite_cloud.mail.cluster import server_token
 from suite_cloud.mail.stalwart.client import is_write_only
 from suite_cloud.mail.stalwart.directory import dkim_management_payload
 from suite_cloud.utils import dkim_algorithms, get_config
@@ -75,13 +76,6 @@ CLUSTER_ROLES = {
 # --- telemetry ------------------------------------------------------------------------
 
 LOG_DIRECTORY = "/var/log/stalwart"  # created by install-stalwart.yml, pruned by its tmpfiles rule
-TELEMETRY_TOKEN_VARIABLE = "SUITE_CLOUD_TELEMETRY_TOKEN"  # in stalwart.env; the WebHooks and OTLP send it
-
-
-def get_telemetry_token(server: Document) -> str:
-    """``<telemetry key>:<telemetry secret>`` of a Stalwart Node or Egress Gateway."""
-
-    return f"{server.telemetry_key}:{server.get_password('telemetry_secret')}"
 
 
 def log_tracer(level: str = "info") -> dict:
@@ -429,7 +423,7 @@ def node_env(node: Document, mode: str = "normal") -> dict[str, str]:
     }
     if mode == "normal":
         env["STALWART_ROLE"] = node.role or "full"
-        env[TELEMETRY_TOKEN_VARIABLE] = get_telemetry_token(node)
+        env[server_token.TOKEN_VARIABLE] = server_token.get_token(node)
         return env
 
     env["STALWART_RECOVERY_ADMIN"] = f"{cluster.admin_username}:{cluster.get_password('admin_password')}"

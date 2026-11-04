@@ -9,7 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 
 from suite_cloud.dns.resolver import verify_ptr_record
-from suite_cloud.mail.cluster import bootstrap, dns, naming, telemetry
+from suite_cloud.mail.cluster import bootstrap, dns, naming, server_token
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
 from suite_cloud.utils import log_exception
@@ -43,9 +43,9 @@ class StalwartNode(Document):
         ssh_port: DF.Int
         ssh_user: DF.Data | None
         ssh_verified: DF.Check
-        telemetry_key: DF.Data | None
-        telemetry_secret: DF.Password | None
-        telemetry_token_installed: DF.Check
+        suite_cloud_key: DF.Data | None
+        suite_cloud_secret: DF.Password | None
+        suite_cloud_token_installed: DF.Check
         title: DF.Data | None
         status: DF.Literal[
             "Pending", "Provisioning", "Provisioned", "Active", "Draining", "Failed", "Disabled"
@@ -59,7 +59,7 @@ class StalwartNode(Document):
         self.name = self.hostname
 
     def before_insert(self) -> None:
-        telemetry.fill_token(self)
+        server_token.fill_token(self)
 
     def validate(self) -> None:
         validate_ssh_user_field(self)
@@ -108,6 +108,7 @@ class StalwartNode(Document):
         self.revalidate_cluster()
 
     def on_update(self) -> None:
+        server_token.clear_server_after_commit(self)
         before = self.get_doc_before_save()
         if not before:
             return
@@ -132,6 +133,7 @@ class StalwartNode(Document):
         dns.delete_node_records(self)
 
     def after_delete(self) -> None:
+        server_token.clear_server_after_commit(self)
         dns.sync_spf_record(self.get_cluster())
 
     # --- helpers --------------------------------------------------------------
@@ -210,20 +212,20 @@ class StalwartNode(Document):
         return bootstrap.upgrade_node(self).name
 
     @frappe.whitelist()
-    def install_telemetry_token(self) -> str:
+    def install_suite_cloud_token(self) -> str:
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.install import install_telemetry
+        from suite_cloud.telemetry.install import install_token
 
-        return install_telemetry(self).name
+        return install_token(self).name
 
     @frappe.whitelist()
-    def rotate_telemetry_token(self) -> str | None:
-        """A new telemetry secret; a job writes it to stalwart.env and restarts Stalwart."""
+    def rotate_suite_cloud_token(self) -> str | None:
+        """A new Suite Cloud secret; a job writes it to stalwart.env and restarts Stalwart."""
 
         frappe.only_for("System Manager")
-        from suite_cloud.telemetry.install import rotate_telemetry_token
+        from suite_cloud.telemetry.install import rotate_token
 
-        return rotate_telemetry_token(self)
+        return rotate_token(self)
 
     @frappe.whitelist()
     def drain(self) -> None:
@@ -267,7 +269,7 @@ class StalwartNode(Document):
     def after_upgrade_failed(self, job: Document) -> None:
         self.set_status("Failed", job.error_log)
 
-    def after_install_telemetry(self, job: Document) -> None:
+    def after_install_token(self, job: Document) -> None:
         from suite_cloud.telemetry.install import mark_token_installed
 
         mark_token_installed(self)

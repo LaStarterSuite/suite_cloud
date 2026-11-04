@@ -4,7 +4,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from suite_cloud.mail.cluster import bootstrap, egress
+from suite_cloud.mail.cluster import bootstrap, egress, server_token
 from suite_cloud.mail.tests.fixtures import configure_settings, make_cluster, make_node
 from suite_cloud.provisioning.ansible import playbook_task_names
 from suite_cloud.telemetry import install, status
@@ -44,19 +44,19 @@ class TestTelemetryInstall(IntegrationTestCase):
         gateway = egress.build_gateway_variables({"gateway": self.gateway.name})
         for server, variables in ((self.node, node), (self.gateway, gateway)):
             self.assertIn("env_normal", variables["__secret_keys__"])
-            token = f"{server.telemetry_key}:{server.get_password('telemetry_secret')}"
-            self.assertIn(f"SUITE_CLOUD_TELEMETRY_TOKEN={token}", variables["env_normal"])
+            token = server_token.get_token(server)
+            self.assertIn(f"SUITE_CLOUD_TOKEN={token}", variables["env_normal"])
             self.assertIn(token, variables["__secret_values__"])
             self.assertFalse(variables["restart_stalwart"])
             self.assertFalse({key for key in variables if key.startswith("agent_")})
-        self.assertTrue(install.telemetry_variables({"restart_stalwart": True})["restart_stalwart"])
+        self.assertTrue(install.token_variables({"restart_stalwart": True})["restart_stalwart"])
 
         upgrade = playbook_task_names("upgrade-stalwart.yml")
         self.assertLess(upgrade.index("Write the runtime environment"), upgrade.index("Restart Stalwart"))
         self.assertNotIn("Install the agent binary", playbook_task_names("configure-node.yml"))
 
     def test_the_install_job_removes_the_retired_agent_first(self) -> None:
-        names = playbook_task_names("install-telemetry.yml")
+        names = playbook_task_names("install-token.yml")
         self.assertEqual(
             names[:3],
             ["Stop the retired agent", "Delete the retired agent", "Reload systemd without the agent"],
@@ -65,23 +65,23 @@ class TestTelemetryInstall(IntegrationTestCase):
             names.index("Reload systemd without the agent"), names.index("Write the runtime environment")
         )
 
-    def test_install_telemetry_jobs(self) -> None:
+    def test_install_token_jobs(self) -> None:
         with patch(EXECUTE):
-            job = install.install_telemetry(self.node)
+            job = install.install_token(self.node)
         self.assertEqual(
             (job.playbook, job.callback, job.server),
-            ("install-telemetry.yml", "after_install_telemetry", self.node.name),
+            ("install-token.yml", "after_install_token", self.node.name),
         )
-        self.assertEqual(job.title, f"Install telemetry token on {self.node.hostname}")
+        self.assertEqual(job.title, f"Install Suite Cloud token on {self.node.hostname}")
         self.assertEqual(frappe.db.get_value("Stalwart Node", self.node.name, "status"), self.node.status)
         self.assertFalse(bootstrap.build_node_variables(json.loads(job.context))["restart_stalwart"])
 
         with patch(EXECUTE):
-            name = self.node.install_telemetry_token()
-        self.assertEqual(frappe.db.get_value("Server Job", name, "callback"), "after_install_telemetry")
+            name = self.node.install_suite_cloud_token()
+        self.assertEqual(frappe.db.get_value("Server Job", name, "callback"), "after_install_token")
         frappe.set_user("Guest")
         self.addCleanup(frappe.set_user, "Administrator")
-        self.assertRaises(frappe.PermissionError, self.node.install_telemetry_token)
+        self.assertRaises(frappe.PermissionError, self.node.install_suite_cloud_token)
 
     def test_the_last_token_switches_the_push_on(self) -> None:
         self.cluster.db_set("status", "Active")
@@ -96,17 +96,19 @@ class TestTelemetryInstall(IntegrationTestCase):
             return {frappe.db.get_value("Server Job", name, "title") for name in names}
 
         with patch(EXECUTE), patch(cluster_push) as pushed, patch(gateway_push) as gateway_pushed:
-            # Install Telemetry Tokens: every server gets its token.
-            jobs = install.install_telemetry_tokens(self.cluster)
+            # Install Suite Cloud Tokens: every server gets its token.
+            jobs = install.install_tokens(self.cluster)
             self.assertEqual(
                 titles(jobs),
-                {f"Install telemetry token on {s.hostname}" for s in (self.node, self.gateway)},
+                {f"Install Suite Cloud token on {s.hostname}" for s in (self.node, self.gateway)},
             )
             pushed.assert_not_called()
 
             before = set(frappe.get_all("Server Job", pluck="name"))
-            self.node.after_install_telemetry(frappe._dict())
-            self.assertTrue(frappe.db.get_value("Stalwart Node", self.node.name, "telemetry_token_installed"))
+            self.node.after_install_token(frappe._dict())
+            self.assertTrue(
+                frappe.db.get_value("Stalwart Node", self.node.name, "suite_cloud_token_installed")
+            )
             pushed.assert_called_once()
             started = set(frappe.get_all("Server Job", pluck="name")) - before
             self.assertEqual(titles(list(started)), {f"Start telemetry push on {self.node.hostname}"})
@@ -114,43 +116,67 @@ class TestTelemetryInstall(IntegrationTestCase):
             self.assertTrue(bootstrap.build_node_variables(json.loads(job.context))["restart_stalwart"])
 
             # A second token for the same cluster changes nothing; the gateway's own switches its push.
-            self.node.after_install_telemetry(frappe._dict())
+            self.node.after_install_token(frappe._dict())
             pushed.assert_called_once()
-            self.gateway.after_install_telemetry(frappe._dict())
+            self.gateway.after_install_token(frappe._dict())
             gateway_pushed.assert_called_once()
 
             # Once all have it, the action pushes and restarts again, which also retries a failure.
-            jobs = self.cluster.install_telemetry_tokens()
+            jobs = self.cluster.install_suite_cloud_tokens()
             self.assertEqual(
                 titles(jobs), {f"Start telemetry push on {s.hostname}" for s in (self.node, self.gateway)}
             )
 
-    def test_a_rotated_telemetry_token_is_written_by_a_job(self) -> None:
-        token = f"{self.node.telemetry_key}:{self.node.get_password('telemetry_secret')}"
-        self.assertIsNone(self.node.rotate_telemetry_token())  # not running: provisioning writes it
+    def test_a_rotated_token_is_written_by_a_job(self) -> None:
+        token = server_token.get_token(self.node)
+        self.assertIsNone(self.node.rotate_suite_cloud_token())  # not running: provisioning writes it
         self.node.db_set("status", "Active")
         with patch(EXECUTE):
-            job = self.node.rotate_telemetry_token()
+            job = self.node.rotate_suite_cloud_token()
         node = frappe.get_doc("Stalwart Node", self.node.name)
-        self.assertNotEqual(f"{node.telemetry_key}:{node.get_password('telemetry_secret')}", token)
-        self.assertEqual(frappe.db.get_value("Server Job", job, "playbook"), "install-telemetry.yml")
+        self.assertNotEqual(server_token.get_token(node), token)
+        self.assertEqual(frappe.db.get_value("Server Job", job, "playbook"), "install-token.yml")
         frappe.set_user("Guest")
         self.addCleanup(frappe.set_user, "Administrator")
-        self.assertRaises(frappe.PermissionError, self.gateway.rotate_telemetry_token)
+        self.assertRaises(frappe.PermissionError, self.gateway.rotate_suite_cloud_token)
 
-    def test_the_patch_fills_missing_tokens(self) -> None:
-        from suite_cloud.patches.v1_0 import fill_telemetry_tokens
-
-        self.node.db_set("telemetry_key", None)
-        frappe.db.delete("__Auth", {"doctype": "Stalwart Node", "name": self.node.name})
-        fill_telemetry_tokens.execute()
-        node = frappe.get_doc("Stalwart Node", self.node.name)
-        token = f"{node.telemetry_key}:{node.get_password('telemetry_secret')}"
-        self.assertRegex(token, r"^[0-9a-f]{20}:[0-9a-f]{40}$")
-        fill_telemetry_tokens.execute()  # a second run keeps it
-        self.assertEqual(
-            frappe.db.get_value("Stalwart Node", self.node.name, "telemetry_key"), node.telemetry_key
+    def test_the_last_token_pushes_the_hook_on_with_telemetry_off(self) -> None:
+        self.cluster.db_set("status", "Active")
+        self.node.db_set("status", "Active")
+        settings = frappe.get_single("Suite Cloud Settings")
+        settings.enable_telemetry = 0
+        settings.save()
+        clear_config_cache()
+        cluster_push = (
+            "suite_cloud.mail.doctype.stalwart_cluster.stalwart_cluster.StalwartCluster.push_config"
         )
+        before = set(frappe.get_all("Server Job", pluck="name"))
+        with patch(EXECUTE), patch(cluster_push) as pushed:
+            self.node.after_install_token(frappe._dict())
+        pushed.assert_called_once()  # the sending-limit hook needs it whatever telemetry is set to
+        self.assertEqual(set(frappe.get_all("Server Job", pluck="name")) - before, set())  # no restart
+
+    def test_the_patch_renames_the_token(self) -> None:
+        from suite_cloud.patches.v1_0 import rename_suite_cloud_token
+
+        with patch(EXECUTE):
+            job = install.token_job(self.node)
+        job.db_set("callback", "after_install_telemetry")  # a job queued before the deploy
+        frappe.db.sql(
+            "insert into `__Auth` (doctype, name, fieldname, password, encrypted) values (%s, %s, %s, %s, 1)",
+            ("Stalwart Cluster", self.cluster.name, "quota_hook_token", "x"),
+        )
+        with patch.object(rename_suite_cloud_token, "rename_field") as rename:
+            rename_suite_cloud_token.execute()
+        renamed = {call.args for call in rename.call_args_list}
+        self.assertIn(("Stalwart Node", "telemetry_secret", "suite_cloud_secret"), renamed)
+        self.assertIn(("Egress Gateway", "telemetry_token_installed", "suite_cloud_token_installed"), renamed)
+        self.assertIn(
+            ("Suite Cloud Settings", "agent_requests_per_minute", "server_requests_per_minute"), renamed
+        )
+        self.assertEqual(len(renamed), 7)
+        self.assertEqual(frappe.db.get_value("Server Job", job.name, "callback"), "after_install_token")
+        self.assertFalse(frappe.db.exists("__Auth", {"fieldname": "quota_hook_token"}))
 
     def test_a_settings_change_is_rolled_out_once(self) -> None:
         self.cluster.db_set("status", "Active")
@@ -209,7 +235,7 @@ class TestTelemetryInstall(IntegrationTestCase):
         self.assertEqual(jobs_after(False), [])  # off only pushes the plans
         jobs = jobs_after(True)
         self.assertEqual({job.server for job in jobs}, {s.name for s in servers})
-        self.assertEqual({job.title.split(" on ")[0] for job in jobs}, {"Install telemetry token"})
+        self.assertEqual({job.title.split(" on ")[0] for job in jobs}, {"Install Suite Cloud token"})
 
         # A save that leaves the switch as it is changes nothing.
         self.assertEqual(jobs_after(True), [])

@@ -179,12 +179,12 @@ Servers and VPSs cost money until you remove them:
 
 Stalwart on each node and gateway pushes events and metrics to the [telemetry API](api/telemetry.md). Suite Cloud stages each batch as a parquet file under `private/files/telemetry/` and the five-minute job copies the files into the `suite_cloud_telemetry` DuckDB data source in Insights, which `migrate` creates.
 
-1. In **Suite Cloud Settings > Telemetry**, make sure **Enable Telemetry** is on. It is on by default on a new site. Take the **Telemetry Key** and **Telemetry Secret** from a Stalwart Node (`frappe.get_doc("Stalwart Node", name).get_password("telemetry_secret")` in a console).
+1. In **Suite Cloud Settings > Telemetry**, make sure **Enable Telemetry** is on. It is on by default on a new site. Take the **Suite Cloud Key** and **Suite Cloud Secret** from a Stalwart Node (`frappe.get_doc("Stalwart Node", name).get_password("suite_cloud_secret")` in a console).
 2. Send a batch as Stalwart's WebHook does:
 
    ```sh
    curl -X POST "http://suite-cloud.localhost:8000/api/v2/method/suite_cloud.api.telemetry.webhook?stream=events" \
-     -H "Authorization: Bearer <telemetry key>:<telemetry secret>" -H "Content-Type: application/json" \
+     -H "Authorization: Bearer <key>.<secret>" -H "Content-Type: application/json" \
      -d '{"events": [{"id": "1", "createdAt": "2026-10-20T09:59:00Z", "type": "delivery.delivered", "data": {"domain": "example.com"}}]}'
    ```
 

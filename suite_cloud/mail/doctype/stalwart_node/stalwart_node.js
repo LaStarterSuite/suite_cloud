@@ -40,12 +40,12 @@ frappe.ui.form.on('Stalwart Node', {
 			frm.add_custom_button(__('Upgrade'), () => frm.events.call(frm, 'upgrade', __('Queueing upgrade...')), __('Actions'))
 		}
 		if (['Provisioned', 'Active', 'Draining'].includes(frm.doc.status)) {
-			frm.add_custom_button(__('Install Telemetry Token'), () => frm.events.call(frm, 'install_telemetry_token', __('Queueing the token install...')), __('Actions'))
+			frm.add_custom_button(__('Install Suite Cloud Token'), () => frm.events.call(frm, 'install_suite_cloud_token', __('Queueing the token install...')), __('Actions'))
 			frm.add_custom_button(
-				__('Rotate Telemetry Token'),
+				__('Rotate Suite Cloud Token'),
 				() =>
-					frappe.confirm(__('Replace the telemetry secret of {0}? A job writes it to the node and restarts Stalwart.', [frm.doc.hostname]), () =>
-						frm.events.call(frm, 'rotate_telemetry_token', __('Queueing...')),
+					frappe.confirm(__('Replace the Suite Cloud secret of {0}? A job writes it to the node and restarts Stalwart.', [frm.doc.hostname]), () =>
+						frm.events.call(frm, 'rotate_suite_cloud_token', __('Queueing...')),
 					),
 				__('Actions'),
 			)

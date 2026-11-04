@@ -7,14 +7,12 @@ month, so nothing resets them. ``flush_usage`` copies the counters to Mail Send 
 and a counter Redis lost is seeded again from there.
 """
 
-import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
 
 import frappe
 import redis
 from frappe.utils import cint
-from frappe.utils.password import get_decrypted_password
 
 from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import (
     periods_at,
@@ -25,7 +23,6 @@ from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import (
 LIMIT_TTL = 3600  # seconds; a cleared limit is read again sooner, this only covers a missed clear
 DAY_TTL = 3 * 86400
 MONTH_TTL = 35 * 86400
-TOKEN_TTL = 300
 FLUSH_BATCH = 5000
 MESSAGE_LIMIT = 199  # characters; Stalwart sends the message as one SMTP reply line
 TOUCHED = "sending_limits:touched"
@@ -157,30 +154,10 @@ def get_refusal_message(verdict: str, account: str, limits: Limits, now: datetim
     return message[:MESSAGE_LIMIT]
 
 
-def get_token_hash(cluster: str) -> str | None:
-    """The SHA-256 of the cluster's Quota Hook Token, cached for 5 minutes; None for no cluster."""
-
-    client = get_client()
-    key = make_key(f"sending_limits:token:{cluster}")
-    if cached := client.get(key):
-        return cached.decode()
-    token = get_decrypted_password("Stalwart Cluster", cluster, "quota_hook_token", raise_exception=False)
-    if not token:
-        return None
-    digest = hashlib.sha256(token.encode()).hexdigest()
-    client.set(key, digest, ex=TOKEN_TTL)
-    return digest
-
-
 def clear_limits_after_commit(account: str) -> None:
     """After commit: a clear before it would let another worker cache the old row again."""
 
     key = make_key(f"sending_limits:limit:{account}")
-    frappe.db.after_commit.add(lambda: get_client().delete(key))
-
-
-def clear_token_hash_after_commit(cluster: str) -> None:
-    key = make_key(f"sending_limits:token:{cluster}")
     frappe.db.after_commit.add(lambda: get_client().delete(key))
 
 

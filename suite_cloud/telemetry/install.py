@@ -1,19 +1,19 @@
-"""What provisioning puts on a server for telemetry: the telemetry token, and the Server Jobs that
-install it and switch Stalwart's push on."""
+"""The Server Jobs that install each server's Suite Cloud token (``server_token``), and the roll-out
+that switches Stalwart's telemetry push on and off."""
 
 from typing import TYPE_CHECKING
 
 import frappe
 from frappe.utils import cint
 
-from suite_cloud.mail.cluster import push, telemetry
+from suite_cloud.mail.cluster import push, server_token, telemetry
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
 from suite_cloud.utils import get_config, log_exception
 
 if TYPE_CHECKING:
     from frappe.model.document import Document
 
-PLAYBOOK = "install-telemetry.yml"
+PLAYBOOK = "install-token.yml"
 ROLL_OUT_KEY = "suite_cloud:telemetry_roll_out"  # the settings change the last roll-out applied
 ROLL_OUT_TIMEOUT = 600  # seconds a roll-out may hold, or wait for, the roll-out lock
 NODE_BUILDER = "suite_cloud.mail.cluster.bootstrap.build_node_variables"
@@ -24,24 +24,24 @@ def is_telemetry_enabled() -> bool:
     return bool(cint(get_config("enable_telemetry")))
 
 
-def telemetry_variables(context: dict) -> dict:
-    """What install-telemetry.yml needs beyond the node and gateway variables. The context's
+def token_variables(context: dict) -> dict:
+    """What install-token.yml needs beyond the node and gateway variables. The context's
     ``restart_stalwart`` restarts Stalwart even when its environment did not change, which starts
     OTLP."""
 
     return {"restart_stalwart": bool(context.get("restart_stalwart"))}
 
 
-def install_telemetry(server: Document) -> Document:
-    """A Server Job that installs the server's telemetry token. Stalwart restarts only when its
+def install_token(server: Document) -> Document:
+    """A Server Job that installs the server's Suite Cloud token. Stalwart restarts only when its
     environment changed."""
 
-    return telemetry_job(server)
+    return token_job(server)
 
 
-def telemetry_job(server: Document, restart_stalwart: bool = False) -> Document:
+def token_job(server: Document, restart_stalwart: bool = False) -> Document:
     is_gateway = server.doctype == "Egress Gateway"
-    action = "Start telemetry push" if restart_stalwart else "Install telemetry token"
+    action = "Start telemetry push" if restart_stalwart else "Install Suite Cloud token"
     context = {"gateway" if is_gateway else "node": server.name, "restart_stalwart": restart_stalwart}
     return create_server_job(
         server,
@@ -49,12 +49,12 @@ def telemetry_job(server: Document, restart_stalwart: bool = False) -> Document:
         title=f"{action} on {server.hostname}",
         context=context,
         variables_builder=GATEWAY_BUILDER if is_gateway else NODE_BUILDER,
-        callback="after_install_telemetry",
+        callback="after_install_token",
     )
 
 
-def install_telemetry_tokens(cluster: Document) -> list[str]:
-    """Rolls the telemetry tokens out to every server of the cluster: its nodes, then each of its
+def install_tokens(cluster: Document) -> list[str]:
+    """Rolls the Suite Cloud tokens out to every server of the cluster: its nodes, then each of its
     gateways."""
 
     owners = [cluster, *(frappe.get_doc("Egress Gateway", name) for name in active_gateways(cluster))]
@@ -67,17 +67,19 @@ def roll_out(owner: Document) -> list[str]:
 
     if owner.status == "Active" and telemetry.is_push_enabled(owner):
         return start_push(owner)
-    return [telemetry_job(server).name for server in owner_servers(owner)]
+    return [token_job(server).name for server in owner_servers(owner)]
 
 
 def start_push(owner: Document) -> list[str]:
-    """Pushes the plan, which now holds the WebHooks and OTLP, then restarts Stalwart on each
-    server to start OTLP."""
+    """Pushes the plan, which now switches on what sends the token, then restarts Stalwart on each
+    server to start OTLP while telemetry is on."""
 
     if owner.status != "Active":
         return []  # its first push and start include the push already
     owner.push_config()
-    return [telemetry_job(server, restart_stalwart=True).name for server in owner_servers(owner)]
+    if not is_telemetry_enabled():
+        return []
+    return [token_job(server, restart_stalwart=True).name for server in owner_servers(owner)]
 
 
 def owner_servers(owner: Document) -> list[Document]:
@@ -94,14 +96,14 @@ def active_gateways(cluster: Document | None = None) -> list[str]:
 
 
 def mark_token_installed(server: Document) -> None:
-    """A job wrote the token to the server's stalwart.env. When it was the last server of its
-    cluster or gateway without one, the push is switched on, in a job of its own so a failed
-    push never fails the job that installed the token."""
+    """A job wrote the token to the server's stalwart.env. When it was the last running server of
+    its cluster or gateway without one, the plan is pushed with the token's users switched on, in a
+    job of its own so a failed push never fails the job that installed the token."""
 
-    owner = telemetry.get_owner(server)
-    was_enabled = telemetry.is_push_enabled(owner)
-    server.db_set("telemetry_token_installed", 1, update_modified=False)
-    if was_enabled or not telemetry.is_push_enabled(owner):
+    owner = server_token.get_owner(server)
+    had_every_token = server_token.has_every_token(owner)
+    server.db_set("suite_cloud_token_installed", 1, update_modified=False)
+    if had_every_token or not server_token.has_every_token(owner):
         return
     if frappe.flags.do_not_enqueue:
         start_push_job(owner.doctype, owner.name)
@@ -112,7 +114,7 @@ def mark_token_installed(server: Document) -> None:
 
 
 def start_push_job(doctype: str, name: str) -> None:
-    """A failure shows on the cluster's form; Install Telemetry Tokens tries again."""
+    """A failure shows on the cluster's form; Install Suite Cloud Tokens tries again."""
 
     owner = frappe.get_doc(doctype, name)
     if doctype == "Stalwart Cluster":
@@ -122,16 +124,16 @@ def start_push_job(doctype: str, name: str) -> None:
         start_push(owner)
 
 
-def rotate_telemetry_token(server: Document) -> str | None:
+def rotate_token(server: Document) -> str | None:
     """A new secret, written to the server's stalwart.env by a job that restarts Stalwart. Until
     then Stalwart sends the old one, is refused and retries."""
 
     server.reload()  # the form sends its unsaved edits too; only the secret is saved
-    server.telemetry_secret = frappe.generate_hash(length=40)
+    server.suite_cloud_secret = frappe.generate_hash(length=40)
     server.save(ignore_permissions=True)
     if server.status not in ("Active", "Draining"):
         return None  # provisioning writes the new token
-    return telemetry_job(server).name
+    return token_job(server).name
 
 
 def filters_for(cluster: Document | None, statuses: tuple[str, ...]) -> dict:

@@ -27,6 +27,7 @@ from opentelemetry.proto.metrics.v1.metrics_pb2 import (
 
 from suite_cloud.api.telemetry import authenticate, otlp, webhook
 from suite_cloud.api.tenant import InvalidInputError
+from suite_cloud.mail.cluster import server_token
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
 from suite_cloud.telemetry import (
     ERROR_EVENTS,
@@ -133,41 +134,41 @@ class PushTestCase(TelemetryApiTestCase):
         self.node = frappe.get_doc(
             "Stalwart Node", {"ipv4_address": NODE_IPS[0], "cluster": self.cluster.name}
         )
-        self.server_token = f"{self.node.telemetry_key}:{self.node.get_password('telemetry_secret')}"
-        self.request(self.server_token, f"{WEBHOOK}?stream=events")
+        self.token = server_token.get_token(self.node)
+        self.request(self.token, f"{WEBHOOK}?stream=events")
 
     def tearDown(self) -> None:
-        frappe.local.telemetry_server = None
+        frappe.local.stalwart_server = None
         super().tearDown()
 
     def request(self, secret: str | None, path: str = WEBHOOK, scheme: str = "Bearer") -> None:
-        frappe.local.telemetry_server = None
+        frappe.local.stalwart_server = None
         super().request(secret, path, scheme)
 
 
 class TestServerToken(PushTestCase):
     def test_each_server_signs_in_with_its_own_token(self) -> None:
         self.assertEqual(frappe.session.user, TELEMETRY_USER)
-        server = frappe.local.telemetry_server
+        server = frappe.local.stalwart_server
         self.assertEqual(
             (server.doctype, server.name, server.ipv4_address), ("Stalwart Node", self.node.name, NODE_IPS[0])
         )
-        self.assertRegex(self.node.telemetry_key, r"^[0-9a-f]{20}$")
+        self.assertRegex(self.token, r"^[0-9a-f]{20}\.[0-9a-f]{40}$")
 
         frappe.set_user("Administrator")
         gateway = frappe.get_doc(
             {"doctype": "Egress Gateway", "cluster": self.cluster.name, "ipv4_address": "203.0.113.50"}
         ).insert()
-        self.request(f"{gateway.telemetry_key}:{gateway.get_password('telemetry_secret')}", OTLP)
-        self.assertEqual(frappe.local.telemetry_server.doctype, "Egress Gateway")
+        self.request(server_token.get_token(gateway), OTLP)
+        self.assertEqual(frappe.local.stalwart_server.doctype, "Egress Gateway")
 
     def test_a_wrong_or_misplaced_token_is_refused(self) -> None:
-        key = self.node.telemetry_key
+        key, secret = self.node.suite_cloud_key, self.node.get_password("suite_cloud_secret")
         cases = (
-            (f"{key}:wrong", WEBHOOK),
-            (f"unknown:{self.node.get_password('telemetry_secret')}", WEBHOOK),
+            (f"{key}.wrong", WEBHOOK),
+            (f"unknown.{secret}", WEBHOOK),
             (key, OTLP),
-            (self.cluster.get_password("quota_hook_token"), WEBHOOK),  # opens only the sending-limit hook
+            (f"{key}:{secret}", WEBHOOK),  # the old telemetry token's form
         )
         for secret, path in cases:
             with self.subTest(path=path), self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
@@ -177,10 +178,10 @@ class TestServerToken(PushTestCase):
         frappe.set_user("Administrator")
         configure_settings(enable_telemetry=0)
         with self.assertRaisesRegex(frappe.AuthenticationError, "failed"):
-            self.request(self.server_token, WEBHOOK)
+            self.request(self.token, WEBHOOK)
 
     def test_only_a_signed_in_server_may_push(self) -> None:
-        frappe.local.telemetry_server = None
+        frappe.local.stalwart_server = None
         self.assertRaisesRegex(frappe.PermissionError, "Stalwart server", webhook, events=[])
         frappe.set_user("Administrator")
         self.assertRaisesRegex(frappe.PermissionError, "Stalwart server", otlp)
@@ -188,8 +189,8 @@ class TestServerToken(PushTestCase):
     def test_other_requests_pass_through_untouched(self) -> None:
         for secret, path, scheme in (
             (None, WEBHOOK, "Bearer"),
-            (self.server_token, WEBHOOK, "Tenant"),
-            (self.server_token, "/api/method/frappe.ping", "Bearer"),  # Frappe's own OAuth bearer tokens
+            (self.token, WEBHOOK, "Tenant"),
+            (self.token, "/api/method/frappe.ping", "Bearer"),  # Frappe's own OAuth bearer tokens
         ):
             with self.subTest(f"{scheme} on {path}"):
                 self.request(secret, path, scheme)
@@ -198,7 +199,7 @@ class TestServerToken(PushTestCase):
 
 class TestWebhook(PushTestCase):
     def push(self, stream: str, batch: list) -> dict:
-        self.request(self.server_token, f"{WEBHOOK}?stream={stream}")
+        self.request(self.token, f"{WEBHOOK}?stream={stream}")
         return webhook(events=batch)
 
     def rows(self) -> list[dict]:
@@ -274,7 +275,7 @@ class TestWebhook(PushTestCase):
 
 class TestOtlp(PushTestCase):
     def test_sums_gauges_and_histograms_become_metric_rows(self) -> None:
-        self.request(self.server_token, OTLP)
+        self.request(self.token, OTLP)
         with (
             patch("frappe.request.get_data", return_value=metrics_request()),
             patch("suite_cloud.api.telemetry.log_error") as log_error,
@@ -302,13 +303,13 @@ class TestOtlp(PushTestCase):
         self.assertEqual(memory["host_ip"], self.node.ipv4_address)
 
     def test_a_body_that_is_not_otlp_is_a_400(self) -> None:
-        self.request(self.server_token, OTLP)
+        self.request(self.token, OTLP)
         with patch("frappe.request.get_data", return_value=b"\xff\xff\xff"):
             self.assertRaises(InvalidInputError, otlp)
         self.assertEqual(self.staged(METRICS), [])
 
     def test_a_resent_push_keeps_its_id(self) -> None:
-        self.request(self.server_token, OTLP)
+        self.request(self.token, OTLP)
         with (
             patch("frappe.request.get_data", return_value=metrics_request()),
             patch("suite_cloud.api.telemetry.log_error"),
@@ -320,7 +321,7 @@ class TestOtlp(PushTestCase):
     def test_stalwart_gets_an_empty_answer_over_http(self) -> None:
         db = frappe.local.db
         headers = {
-            "Authorization": f"Bearer {self.server_token}",
+            "Authorization": f"Bearer {self.token}",
             "X-Frappe-Site-Name": frappe.local.site,
             "Content-Type": "application/x-protobuf",
         }
@@ -335,7 +336,7 @@ class TestOtlp(PushTestCase):
             response = get_test_client().open(
                 OTLP, method="POST", headers=headers, base_url="http://localhost/", data=metrics_request()
             )
-        self.request(self.server_token, OTLP)
+        self.request(self.token, OTLP)
         self.assertEqual((response.status_code, response.get_data()), (200, b""))
         self.assertEqual(len(self.staged(METRICS)), 1)
 

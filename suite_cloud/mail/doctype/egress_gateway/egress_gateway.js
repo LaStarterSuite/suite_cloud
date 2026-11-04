@@ -24,7 +24,7 @@ frappe.ui.form.on('Egress Gateway', {
 		}
 		if (['Provisioned', 'Active'].includes(frm.doc.status)) {
 			frm.events.show_telemetry_status(frm)
-			frm.add_custom_button(__('Rotate Telemetry Token'), () => frm.events.rotate_telemetry_token(frm), __('Actions'))
+			frm.add_custom_button(__('Rotate Suite Cloud Token'), () => frm.events.rotate_suite_cloud_token(frm), __('Actions'))
 			frm.add_custom_button(
 				__('Re-provision'),
 				() =>
@@ -77,9 +77,9 @@ frappe.ui.form.on('Egress Gateway', {
 		})
 	},
 
-	rotate_telemetry_token(frm) {
-		frappe.confirm(__('Replace the telemetry secret of {0}? A job writes it to the server and restarts Stalwart.', [frm.doc.hostname]), () =>
-			frm.events.call(frm, 'rotate_telemetry_token', __('Queueing...')),
+	rotate_suite_cloud_token(frm) {
+		frappe.confirm(__('Replace the Suite Cloud secret of {0}? A job writes it to the server and restarts Stalwart.', [frm.doc.hostname]), () =>
+			frm.events.call(frm, 'rotate_suite_cloud_token', __('Queueing...')),
 		)
 	},
 

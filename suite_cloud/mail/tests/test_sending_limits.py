@@ -16,7 +16,7 @@ from suite_cloud.api.mail import accounts, domains
 from suite_cloud.api.telemetry import authenticate
 from suite_cloud.api.tenant import SendLimitsNotAllowedError
 from suite_cloud.mail import sending_limits
-from suite_cloud.mail.cluster import plan, push, quota
+from suite_cloud.mail.cluster import plan, push, quota, server_token
 from suite_cloud.mail.doctype.mail_send_usage import mail_send_usage
 from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import (
     current_periods,
@@ -28,16 +28,13 @@ from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import (
 from suite_cloud.mail.tests.fixtures import make_cluster, make_node
 from suite_cloud.mail.tests.test_tenant_api import TenantApiTestCase
 from suite_cloud.patches.v1_0 import (
-    fill_quota_hook_tokens,
     fill_send_limit_defaults,
-    move_sending_limits_to_suite_cloud,
     rename_backstop_to_max_daily_send_limit,
 )
-from suite_cloud.telemetry import TELEMETRY_USER, install
+from suite_cloud.telemetry import TELEMETRY_USER
 from suite_cloud.tests.fixtures import ROOT_DOMAIN, configure_settings, production_logging
 
 HOOK = "/api/v2/method/suite_cloud.api.sending_limits.check"
-EXECUTE = "suite_cloud.suite_cloud.doctype.server_job.server_job.ServerJob.execute"
 
 
 def frozen_clock(moment: datetime) -> type[datetime]:
@@ -51,16 +48,12 @@ def frozen_clock(moment: datetime) -> type[datetime]:
     return Frozen
 
 
-def clear_keys(cluster: str) -> None:
-    """The test accounts' keys, the touched sets and the test cluster's token: the dev site may
-    count real mail under the same prefix."""
+def clear_keys() -> None:
+    """The test accounts' keys and the touched sets: the dev site may count real mail under the
+    same prefix."""
 
     client = sending_limits.get_client()
-    for pattern in (
-        "sending_limits:*@acme.com*",
-        "sending_limits:touched*",
-        f"sending_limits:token:{cluster}",
-    ):
+    for pattern in ("sending_limits:*@acme.com*", "sending_limits:touched*"):
         for key in client.scan_iter(match=sending_limits.make_key(pattern)):
             client.delete(key)
 
@@ -80,25 +73,24 @@ class SendingLimitsTestCase(TenantApiTestCase):
             clock = patch.object(module, "datetime", frozen_clock(self.now))
             clock.start()
             self.addCleanup(clock.stop)
-        clear_keys(self.cluster.name)
-        self.addCleanup(clear_keys, self.cluster.name)
-        self.token = self.cluster.get_password("quota_hook_token")
+        clear_keys()
+        self.addCleanup(clear_keys)
         frappe.set_user("Administrator")
+        self.node = make_node(self.cluster)
+        self.token = server_token.get_token(self.node)
 
     def tearDown(self) -> None:
-        frappe.local.hook_cluster = None
+        frappe.local.stalwart_server = None
         frappe.db.delete("Mail Send Usage", {"account": ("like", "%@acme.com")})
         super().tearDown()
 
-    def sign_in(self, token: str | None = None, cluster: str | None = None) -> None:
-        """A hook request as the auth hook sees it; an empty ``cluster`` leaves it out of the URL."""
+    def sign_in(self, token: str | None = None) -> None:
+        """A hook request as the auth hook sees it."""
 
         token = self.token if token is None else token
-        cluster = self.cluster.name if cluster is None else cluster
-        frappe.local.hook_cluster = None
+        frappe.local.stalwart_server = None
         frappe.set_user("Guest")
-        path = f"{HOOK}?cluster={cluster}" if cluster else HOOK
-        frappe.utils.set_request(method="POST", path=path, headers={"Authorization": f"Bearer {token}"})
+        frappe.utils.set_request(method="POST", path=HOOK, headers={"Authorization": f"Bearer {token}"})
         frappe.local.form_dict = frappe._dict()
         authenticate()
 
@@ -182,7 +174,7 @@ class TestCheck(SendingLimitsTestCase):
             production_logging(),
         ):
             response = get_test_client().open(
-                f"{HOOK}?cluster={self.cluster.name}",
+                HOOK,
                 method="POST",
                 headers=headers,
                 base_url="http://localhost/",
@@ -206,45 +198,53 @@ class TestCheck(SendingLimitsTestCase):
         for account in ("bob@acme.com", "ghost@acme.com", "carol@acme.com"):
             self.assertEqual(self.counter(account, day), {})
 
-    def test_only_the_named_cluster_s_token_signs_in(self) -> None:
-        other = make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}")
+    def test_only_a_node_s_own_token_signs_in(self) -> None:
+        gateway = frappe.get_doc(
+            {"doctype": "Egress Gateway", "cluster": self.cluster.name, "ipv4_address": "203.0.113.50"}
+        ).insert()
+        key, secret = self.node.suite_cloud_key, self.node.get_password("suite_cloud_secret")
         cases = (
-            ("wrong", self.cluster.name),
-            (self.token, ""),
-            (other.get_password("quota_hook_token"), self.cluster.name),
-            (self.token, other.name),
-            (self.token, "no-such-cluster"),
+            "wrong",
+            f"{key}.wrong",
+            f"{key}:{secret}",  # the old telemetry token's form
+            server_token.get_token(gateway),  # a gateway sends no recipients to check
         )
-        for token, cluster in cases:
-            with self.subTest(cluster=cluster), self.assertRaises(frappe.AuthenticationError) as raised:
-                self.sign_in(token, cluster)
+        for token in cases:
+            with self.subTest(token=token[:24]), self.assertRaises(frappe.AuthenticationError) as raised:
+                self.sign_in(token)
             self.assertEqual(raised.exception.http_status_code, 401)
 
-        # Telemetry being off does not matter, and only a signed-in hook may call.
+        # The caller's cluster is its node's. Telemetry being off does not matter, and only a
+        # signed-in node may call.
         frappe.set_user("Administrator")
+        other = make_node(make_cluster("c2", hostname=f"mail.c2.{ROOT_DOMAIN}"), ipv4="203.0.113.20")
         configure_settings(enable_telemetry=0)
         self.sign_in()
         self.assertEqual(
-            (frappe.session.user, frappe.local.hook_cluster), (TELEMETRY_USER, self.cluster.name)
+            (frappe.session.user, frappe.local.stalwart_server.cluster), (TELEMETRY_USER, self.cluster.name)
         )
+        self.sign_in(server_token.get_token(other))
+        self.assertEqual(frappe.local.stalwart_server.cluster, other.cluster)
         frappe.set_user("Administrator")
-        frappe.local.hook_cluster = None
+        frappe.local.stalwart_server = None
         self.assertRaises(frappe.PermissionError, sending_limits_api.check)
 
-    def test_a_saved_cluster_forgets_its_token_after_commit(self) -> None:
+    def test_a_rotated_token_is_forgotten_after_commit(self) -> None:
         self.sign_in()
         frappe.set_user("Administrator")
-        frappe.db.delete(
-            "__Auth",
-            {"doctype": "Stalwart Cluster", "name": self.cluster.name, "fieldname": "quota_hook_token"},
-        )
-        fill_quota_hook_tokens.execute()  # a new token
-        cluster = frappe.get_doc("Stalwart Cluster", self.cluster.name)
-        cluster.save()
-        self.sign_in()  # the cached hash still opens until the save commits
+        node = frappe.get_doc("Stalwart Node", self.node.name)
+        node.suite_cloud_secret = frappe.generate_hash(length=40)
+        node.save()
+        self.sign_in()  # the cached secret still opens until the save commits
         frappe.db.after_commit.run()
         self.assertRaises(frappe.AuthenticationError, self.sign_in)
-        self.sign_in(cluster.get_password("quota_hook_token"))
+        self.sign_in(server_token.get_token(node))
+
+    def test_a_warm_cache_reads_no_database_row(self) -> None:
+        self.sign_in()
+        with patch.object(server_token, "find_server") as find:
+            self.sign_in()
+        find.assert_not_called()
 
     def test_a_missing_counter_is_seeded_from_mail_send_usage_once(self) -> None:
         day, month = current_periods()
@@ -641,16 +641,26 @@ class TestQuotaPlan(SendingLimitsTestCase):
 
         hook = hooks[1]["value"]["sending-limits"]
         self.assertEqual(
-            hook["url"],
-            f"https://cloud.example.test/api/v2/method/suite_cloud.api.sending_limits.check?cluster={self.cluster.name}",
+            hook["url"], "https://cloud.example.test/api/v2/method/suite_cloud.api.sending_limits.check"
         )
         self.assertEqual(
             (hook["enable"], hook["stages"], hook["timeout"], hook["tempFailOnError"]),
             (quota.SIGNED_IN, {"rcpt": True}, 1000, False),
         )
         self.assertEqual(hook["httpHeaders"], {"X-Suite-Cloud-Hook": "sending-limits"})
-        self.assertEqual(hook["httpAuth"]["bearerToken"]["secret"], self.token)
-        self.assertIn(self.token, plan.secret_strings(operations))
+        self.assertEqual(
+            hook["httpAuth"]["bearerToken"],
+            {"@type": "EnvironmentVariable", "variableName": "SUITE_CLOUD_TOKEN"},
+        )
+        self.assertNotIn(self.token, plan.to_ndjson(operations))
+
+        # A running node without its token keeps the hook off: the reload would fail on it.
+        self.node.db_set("status", "Active")
+        self.assertEqual(quota.hook_operation(self.cluster)["value"]["sending-limits"]["enable"], quota.NEVER)
+        self.node.db_set("suite_cloud_token_installed", 1)
+        self.assertEqual(
+            quota.hook_operation(self.cluster)["value"]["sending-limits"]["enable"], quota.SIGNED_IN
+        )
 
         throttle = next(op for op in operations if op["object"] == "MtaInboundThrottle")["value"][
             "quota-backstop"
@@ -687,18 +697,6 @@ class TestQuotaPlan(SendingLimitsTestCase):
         hooks = self.fake.all("MtaHook")
         self.assertEqual([hook["httpHeaders"] for hook in hooks], [{"X-Suite-Cloud-Hook": "sending-limits"}])
 
-    def test_the_patch_keeps_queued_jobs_callbacks_and_moves_no_cluster(self) -> None:
-        node = make_node(self.cluster)
-        with patch(EXECUTE):
-            retried = install.telemetry_job(node)
-        retried.db_set("callback", "after_install_agent")  # a job queued before the deploy
-        with patch("frappe.enqueue") as enqueue:
-            move_sending_limits_to_suite_cloud.execute()
-        self.assertEqual(
-            frappe.db.get_value("Server Job", retried.name, "callback"), "after_install_telemetry"
-        )
-        enqueue.assert_not_called()  # each cluster is moved by hand
-
     def test_the_patch_turns_the_backstop_on_without_a_config_push(self) -> None:
         self.cluster.db_set("max_daily_send_limit", 0)
         with patch.object(push, "resync_cluster_after_commit") as resync:
@@ -707,17 +705,3 @@ class TestQuotaPlan(SendingLimitsTestCase):
             frappe.db.get_value("Stalwart Cluster", self.cluster.name, "max_daily_send_limit"), 2000
         )
         resync.assert_not_called()
-
-    def test_the_patch_gives_older_clusters_a_token_and_keeps_existing_ones(self) -> None:
-        frappe.set_user("Administrator")
-        token = self.cluster.get_password("quota_hook_token")
-        self.assertEqual(len(token), 32)
-        fill_quota_hook_tokens.execute()
-        self.assertEqual(self.cluster.get_password("quota_hook_token"), token)
-
-        frappe.db.delete(
-            "__Auth",
-            {"doctype": "Stalwart Cluster", "name": self.cluster.name, "fieldname": "quota_hook_token"},
-        )
-        fill_quota_hook_tokens.execute()
-        self.assertNotIn(self.cluster.get_password("quota_hook_token", raise_exception=False), (None, token))
