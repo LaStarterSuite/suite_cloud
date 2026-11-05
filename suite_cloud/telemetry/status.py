@@ -14,7 +14,6 @@ from frappe.utils import cint, get_datetime, now_datetime, pretty_date
 
 from suite_cloud.mail.cluster import rspamd
 from suite_cloud.mail.cluster.telemetry import get_reporting_servers
-from suite_cloud.telemetry.alerts import DEFAULT_SILENCE_MINUTES
 from suite_cloud.utils import get_config
 
 if TYPE_CHECKING:
@@ -27,6 +26,7 @@ SCAN_CHECK_IN = "scan_check_in"  # each run of a node's scan shipper, records or
 SCAN_RECORDS = "scan_records"  # a shipper request that carried records
 STREAMS = (METRICS, EVENTS, SCAN_CHECK_IN, SCAN_RECORDS)
 SERVER_DOCTYPES = ("Stalwart Node", "Egress Gateway")
+DEFAULT_SILENCE_MINUTES = 30  # the settings' default, used until the site has it
 STATES = ("silent", "outdated", "unknown", "quiet", "off", "ok")  # worst first
 TELEMETRY = "telemetry"  # the one indicator while telemetry is off
 COLORS = {
@@ -56,9 +56,14 @@ def get_seen_at(host_ip: str, stream: str) -> datetime | None:
     return get_datetime(contact["seen_at"]) if contact else None
 
 
+def get_silence() -> timedelta:
+    """How long a server that reports on a schedule may stay quiet; the forms and the alerts share it."""
+
+    return timedelta(minutes=cint(get_config("telemetry_silence_minutes")) or DEFAULT_SILENCE_MINUTES)
+
+
 def is_recent(seen: datetime) -> bool:
-    silence = timedelta(minutes=cint(get_config("telemetry_silence_minutes")) or DEFAULT_SILENCE_MINUTES)
-    return now_datetime() - seen <= silence
+    return now_datetime() - seen <= get_silence()
 
 
 def get_label(stream: str) -> str:

@@ -91,11 +91,12 @@ Stalwart keeps undelivered events in memory and tries again every 30 seconds unt
 
 ## Alerts
 
-Every five minutes Suite Cloud checks the loaded data and keeps a **Telemetry Alert** record per condition, open until it clears:
+Every five minutes Suite Cloud checks the telemetry and keeps a **Server Alert** record per condition, open until it clears (`suite_cloud/telemetry/alerts.py`):
 
 | Alert | Condition |
 | --- | --- |
-| Silent Host | A server that reported in the last day sent nothing for **Silent Host After (Minutes)**, 30 by default. OTLP pushes every interval even on an idle server. The alert stays open until a newer batch proves the server is back, even once the retention has deleted its last rows. Resolve it by hand when the server was taken out of service. It then stays resolved until the server reports again |
-| Error Rate | A server logged at least **Errors per Hour Alert** error events in the last hour, 100 by default. Stalwart pushes only the listed events, so a share of all events would mean nothing |
+| Metrics Silent | A server that pushed metrics in the last day pushed none for **Silent After (Minutes)**, 30 by default. OTLP pushes every interval even on an idle server. The alert stays open until a newer push proves the server is back, even once the retention has deleted its last rows |
+| Outbound Scan Silent | An Active or Draining node with the current outbound scanner had no check-in from its scan shipper for **Silent After (Minutes)**. The shipper checks in every minute, records or not. The check-ins are in the cache the forms read: a node the cache lost opens nothing, and keeps an open alert until it checks in again. Nothing is checked while telemetry or the scan is off |
+| Error Rate | A server logged at least **Errors per Hour Alert** error events in the last hour, 100 by default. Stalwart pushes only the listed events, so a share of all events would mean nothing. Events come only when something happens, so a quiet events feed raises no alert |
 
-**Telemetry Alert Recipients** get a mail when an alert opens and when it resolves. With no recipients, the records are kept and nobody is mailed.
+Resolve a silence alert by hand when the server was taken out of service. It then stays resolved until the server reports again. **Server Alert Recipients** get a mail when an alert opens and when it resolves. With no recipients, the records are kept and nobody is mailed.

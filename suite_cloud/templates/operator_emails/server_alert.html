@@ -1,0 +1,54 @@
+{% extends "templates/tenant_emails/base.html" %}
+{% set product = "Suite" %}
+{% set resolved = status == "Resolved" %}
+{% if alert_type == "Metrics Silent" and resolved %}
+{% set heading = server ~ " is sending metrics again" %}
+{% set message = "Suite Cloud receives metrics from " ~ server ~ " again, so the alert is resolved." %}
+{% elif alert_type == "Metrics Silent" %}
+{% set heading = server ~ " stopped sending metrics" %}
+{% set message = "Stalwart on " ~ server ~ " pushes metrics every minute, even when it is idle. Suite Cloud has received none for longer than the settings allow, so Stalwart may be down or unable to reach Suite Cloud." %}
+{% set fine_print = "If you took this server out of service, resolve the alert by hand. It stays resolved until the server reports again." %}
+{% elif alert_type == "Outbound Scan Silent" and resolved %}
+{% set heading = "The outbound scan on " ~ server ~ " is reporting again" %}
+{% set message = "The scan shipper on " ~ server ~ " checks in with Suite Cloud again, so the alert is resolved." %}
+{% elif alert_type == "Outbound Scan Silent" %}
+{% set heading = "The outbound scan on " ~ server ~ " stopped reporting" %}
+{% set message = "The scan shipper on " ~ server ~ " checks in every minute and sends the scan records. It has not checked in for longer than the settings allow, so the records wait on the node. Check the suite-cloud-scans service on the node." %}
+{% set fine_print = "If you took this node out of service, resolve the alert by hand. It stays resolved until the node reports again." %}
+{% elif resolved %}
+{% set heading = "Errors on " ~ server ~ " are back under the threshold" %}
+{% set message = "The error events " ~ server ~ " logged in the last hour are under the threshold again, so the alert is resolved." %}
+{% else %}
+{% set heading = server ~ " is logging too many errors" %}
+{% set message = "In the last hour, " ~ server ~ " logged at least as many error events as the threshold in the settings." %}
+{% endif %}
+{% set button = "View alert" %}
+{% set note = "You are receiving this because your address is in the Server Alert Recipients of Suite Cloud Settings." %}
+{% block details %}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin: 24px 0 0; background-color: #f8f8f8; border-radius: 12px;">
+	<tr>
+		<td style="padding: 6px 18px;">
+			<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size: 14px; line-height: 1.5;">
+				<tr>
+					<td style="padding: 12px 0; width: 88px; vertical-align: top; color: #7c7c7c; border-bottom: 1px solid #ededed;">Server</td>
+					<td style="padding: 12px 0; color: #383838; word-break: break-word; border-bottom: 1px solid #ededed;"><b style="font-weight: 600; color: #171717;">{{ server | e }}</b>{% if server != host_ip %} &middot; {{ host_ip | e }}{% endif %}</td>
+				</tr>
+				<tr>
+					<td style="padding: 12px 0; width: 88px; vertical-align: top; color: #7c7c7c; border-bottom: 1px solid #ededed;">Opened</td>
+					<td style="padding: 12px 0; color: #383838; border-bottom: 1px solid #ededed;">{{ opened_at | e }}</td>
+				</tr>
+				{% if resolved_at %}
+				<tr>
+					<td style="padding: 12px 0; width: 88px; vertical-align: top; color: #7c7c7c; border-bottom: 1px solid #ededed;">Resolved</td>
+					<td style="padding: 12px 0; color: #383838; border-bottom: 1px solid #ededed;">{{ resolved_at | e }}</td>
+				</tr>
+				{% endif %}
+				<tr>
+					<td style="padding: 12px 0; width: 88px; vertical-align: top; color: #7c7c7c;">Details</td>
+					<td style="padding: 12px 0; color: #383838; word-break: break-word;">{{ details | e }}</td>
+				</tr>
+			</table>
+		</td>
+	</tr>
+</table>
+{% endblock %}

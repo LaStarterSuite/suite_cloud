@@ -57,7 +57,7 @@ scheduler_events = {
             "suite_cloud.hosting.doctype.suite_tenant_request.suite_tenant_request.resume_requests",
             "suite_cloud.hosting.capacity.ensure_site_pool",
             "suite_cloud.telemetry.warehouse.load_staged_batches",
-            "suite_cloud.telemetry.alerts.check_telemetry_alerts",
+            "suite_cloud.telemetry.alerts.check_server_alerts",
         ],
     },
     "hourly": [

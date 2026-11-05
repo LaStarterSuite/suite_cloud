@@ -102,7 +102,7 @@
    "label": "Suite Cloud"
   },
   {
-   "description": "URL that tenants and hosted sites use to reach Suite Cloud. Blank uses this site's URL. On a development machine, use a tunnel URL.",
+   "description": "URL that tenants, hosted sites and Stalwart servers use to reach Suite Cloud. Blank uses this site's URL. On a development machine, use a tunnel URL.",
    "fieldname": "public_url",
    "fieldtype": "Data",
    "label": "Public URL",
@@ -526,7 +526,7 @@
   },
   {
    "default": "Enforce",
-   "description": "Off: no scan. Observe: scan and log the score, refuse nothing. Enforce: refuse a message at the reject score. A change between Observe and Enforce needs Install Outbound Scanner on each cluster.",
+   "description": "Off: no scan. Observe: scan and log the score, refuse nothing. Enforce: refuse a message at the reject score. After a change between Observe and Enforce, run Install Outbound Scanners on each cluster.",
    "fieldname": "outbound_scan_mode",
    "fieldtype": "Select",
    "label": "Outbound Spam Scan Mode",
@@ -536,7 +536,7 @@
   {
    "default": "15",
    "depends_on": "eval:doc.outbound_scan_mode == 'Enforce'",
-   "description": "The Rspamd score at which Enforce refuses a message. A change needs Install Outbound Scanner on each cluster.",
+   "description": "The Rspamd score at which Enforce refuses a message. After a change, run Install Outbound Scanners on each cluster.",
    "fieldname": "outbound_scan_reject_score",
    "fieldtype": "Float",
    "label": "Outbound Spam Scan Reject Score",
@@ -559,7 +559,7 @@
   },
   {
    "default": "300",
-   "description": "Per server: Stalwart's webhook and metrics pushes together.",
+   "description": "Limit for each server, over all its telemetry requests: events, metrics and scan records.",
    "fieldname": "server_requests_per_minute",
    "fieldtype": "Int",
    "label": "Server Requests per Minute",
@@ -575,21 +575,21 @@
   },
   {
    "default": "10",
-   "description": "Stalwart drops events it could not deliver for this long. Covers a Suite Cloud deploy. Stalwart resends everything it holds in one request, so a longer time can build a backlog too large to deliver.",
+   "description": "Stalwart drops events it could not deliver for this long. The default covers a Suite Cloud deploy. A longer time can build a backlog too large to send in one request.",
    "fieldname": "webhook_discard_after_minutes",
    "fieldtype": "Int",
    "label": "Webhook Discard After (Minutes)",
    "reqd": 1
   },
   {
-   "description": "Stalwart pushes its events and metrics to the telemetry API. A loader copies them into Insights.",
+   "description": "Stalwart pushes events and metrics, and each node sends its scan records. A loader copies them into Insights every five minutes.",
    "fieldname": "telemetry_section",
    "fieldtype": "Section Break",
    "label": "Telemetry"
   },
   {
    "default": "1",
-   "description": "Stalwart pushes events and metrics. Changing it queues a job on each server.",
+   "description": "Turns on events, metrics and scan records. A change queues a job on each server.",
    "fieldname": "enable_telemetry",
    "fieldtype": "Check",
    "label": "Enable Telemetry"
@@ -600,7 +600,7 @@
   },
   {
    "default": "90",
-   "description": "Days to keep events and metrics in Insights.",
+   "description": "Days to keep events, metrics and scan records in Insights.",
    "fieldname": "telemetry_retention_days",
    "fieldtype": "Int",
    "label": "Telemetry Retention (Days)",
@@ -609,16 +609,16 @@
   {
    "collapsible": 1,
    "collapsible_depends_on": "eval:doc.enable_telemetry",
-   "description": "Checked every five minutes. An alert opens for a server that stops reporting or logs too many errors.",
+   "description": "Checked every five minutes. An alert opens when the metrics or scan shipper of a server go silent, or when it logs too many errors.",
    "fieldname": "telemetry_alerts_section",
    "fieldtype": "Section Break",
-   "label": "Telemetry Alerts"
+   "label": "Server Alerts"
   },
   {
-   "description": "Emails to notify, separated by commas or lines. Blank records alerts without email.",
+   "description": "Addresses to mail, separated by commas or new lines. Blank keeps the alerts without mail.",
    "fieldname": "telemetry_alert_recipients",
    "fieldtype": "Small Text",
-   "label": "Telemetry Alert Recipients"
+   "label": "Server Alert Recipients"
   },
   {
    "fieldname": "column_break_telemetry_alerts",
@@ -626,10 +626,10 @@
   },
   {
    "default": "30",
-   "description": "A node with no data for this long gets a Silent Host alert.",
+   "description": "A server whose metrics or scan shipper send nothing for this long gets an alert. Its form shows the indicator in red.",
    "fieldname": "telemetry_silence_minutes",
    "fieldtype": "Int",
-   "label": "Silent Host After (Minutes)",
+   "label": "Silent After (Minutes)",
    "reqd": 1
   },
   {
@@ -644,7 +644,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-11-05 12:00:00.000000",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Cloud Settings",

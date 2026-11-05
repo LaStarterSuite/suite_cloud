@@ -34,8 +34,8 @@ class TestRecordNames(IntegrationTestCase):
                 "Mailing List Recipient", mailing_list="team@example.test", email="ann@example.test"
             ),
             "Server Job": self.insert_hash_named("Server Job", title="Done", status="Success"),
-            "Telemetry Alert": self.insert_hash_named(
-                "Telemetry Alert", alert_type="Silent Host", status="Open", host_ip="203.0.113.1"
+            "Server Alert": self.insert_hash_named(
+                "Server Alert", alert_type="Metrics Silent", status="Open", host_ip="203.0.113.1"
             ),
         }
         pending_job = self.insert_hash_named("Server Job", title="Queued", status="Pending")
@@ -49,9 +49,9 @@ class TestRecordNames(IntegrationTestCase):
         self.assertTrue(frappe.db.exists("Stalwart Store", data_store))
         self.assertTrue(frappe.db.exists("Server Job", pending_job))
 
-        renamed = frappe.get_all("Telemetry Alert", pluck="name")
+        renamed = frappe.get_all("Server Alert", pluck="name")
         name_records_with_uuid7.execute()  # a second run leaves UUID names alone
-        self.assertCountEqual(frappe.get_all("Telemetry Alert", pluck="name"), renamed)
+        self.assertCountEqual(frappe.get_all("Server Alert", pluck="name"), renamed)
 
     def insert_hash_named(self, doctype: str, **fields) -> str:
         name = frappe.generate_hash(length=10)

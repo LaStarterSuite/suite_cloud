@@ -109,7 +109,7 @@ The Stalwart Node, Egress Gateway and Stalwart Cluster forms show one indicator 
 | Outbound scan (nodes only) | The shipper checked in within the window | Grey: the mode is Off, or the scanner is not installed. Orange: the scanner is out of date. Red: the shipper is silent. Blue: no check-in yet |
 | Scan records (beside a green Outbound scan, once records arrived) | Records received within the window | Grey: none since then, which is normal while nobody sends |
 
-The cluster form shows one indicator for each kind over its Active and Draining nodes and Active gateways. It takes the worst state and names the servers that need a look by their short name, for example `Metrics: 1 reporting, 1 silent (n2)`. Keep each text short: Frappe squeezes an indicator's dot when its text wraps. While telemetry is off, each form shows only `Telemetry: off`.
+The cluster form shows one indicator for each kind over its Active and Draining nodes and Active gateways. It takes the worst state and names the servers that need a look by their short name, for example `Metrics: 1 reporting, 1 silent (n2)`. Keep each text short: Frappe squeezes an indicator's dot when its text wraps. While telemetry is off, each form shows only `Telemetry: off`. A red Metrics or Outbound scan indicator also opens a **Server Alert** of type Metrics Silent or Outbound Scan Silent at the next five-minute check (see [the alerts](api/telemetry.md#alerts)).
 
 ## Telemetry
 
