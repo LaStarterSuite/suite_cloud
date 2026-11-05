@@ -8,7 +8,7 @@ while telemetry is on; the sending-limit hook (``suite_cloud.api.sending_limits`
 Node's whatever telemetry is set to. The ``authenticate`` auth hook checks the token and runs the
 request as the telemetry user, which holds no role, so a token opens nothing but these methods. A
 batch is staged as one parquet file and acknowledged; the warehouse loads it later. The cache notes
-which host sent a batch last, for the status on the node forms.
+when each host last sent each kind of telemetry, for the status on the node forms.
 """
 
 from collections.abc import Callable
@@ -23,7 +23,14 @@ from werkzeug.wrappers import Response
 
 from suite_cloud.api.tenant import InvalidInputError, assert_arguments, throttle
 from suite_cloud.mail.cluster import server_token
-from suite_cloud.telemetry import EVENTS, METRICS, OUTBOUND_SCAN_SYMBOLS, OUTBOUND_SCANS, TELEMETRY_USER
+from suite_cloud.telemetry import (
+    EVENTS,
+    METRICS,
+    OUTBOUND_SCAN_SYMBOLS,
+    OUTBOUND_SCANS,
+    TELEMETRY_USER,
+    status,
+)
 from suite_cloud.telemetry import outbound_scans as scans_module
 from suite_cloud.telemetry.push import (
     STREAM_EVENTS,
@@ -33,7 +40,6 @@ from suite_cloud.telemetry.push import (
     get_metrics_batch_id,
 )
 from suite_cloud.telemetry.spool import Spool
-from suite_cloud.telemetry.status import record_contact
 from suite_cloud.utils import get_config, log_error
 
 API_PATHS = ("/api/v2/method/suite_cloud.api.telemetry.", "/api/method/suite_cloud.api.telemetry.")
@@ -139,7 +145,7 @@ def webhook(events: list) -> dict:
     if rows:
         envelope = get_server_envelope(server, get_batch_id(server.name, events))
         Spool().write(EVENTS, EVENTS.get_batch(envelope, rows), envelope["batch_id"])
-    record_contact(server.ipv4_address)
+    status.record_contact(server.ipv4_address, status.EVENTS)
     return {"accepted": len(rows), "skipped": len(problems)}
 
 
@@ -160,7 +166,7 @@ def otlp() -> Response:
     if rows:
         envelope = get_server_envelope(server, get_metrics_batch_id(server.name, body))
         Spool().write(METRICS, METRICS.get_batch(envelope, rows), envelope["batch_id"])
-    record_contact(server.ipv4_address)
+    status.record_contact(server.ipv4_address, status.METRICS)
     return Response(status=200)  # an empty ExportMetricsServiceResponse
 
 
@@ -184,7 +190,9 @@ def outbound_scans(scans: list) -> dict:
     for table, table_rows in ((OUTBOUND_SCANS, rows), (OUTBOUND_SCAN_SYMBOLS, symbol_rows)):
         if table_rows:
             spool.write(table, table.get_batch(envelope, table_rows), envelope["batch_id"])
-    record_contact(server.ipv4_address)
+    status.record_contact(server.ipv4_address, status.SCAN_CHECK_IN)
+    if rows:
+        status.record_contact(server.ipv4_address, status.SCAN_RECORDS)
     return {"accepted": len(rows), "skipped": len(problems)}
 
 

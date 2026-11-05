@@ -40,7 +40,8 @@ from suite_cloud.telemetry import (
     WEBHOOK_EVENTS,
 )
 from suite_cloud.telemetry.spool import Spool
-from suite_cloud.telemetry.status import CACHE_KEY, forget_contacts
+from suite_cloud.telemetry.status import EVENTS as EVENTS_STREAM
+from suite_cloud.telemetry.status import forget_contacts, get_seen_at
 from suite_cloud.tests.fixtures import configure_settings, production_logging
 
 NODE_IPS = ("203.0.113.5", "198.51.100.77")
@@ -219,9 +220,9 @@ class TestWebhook(PushTestCase):
 
         self.assertEqual(response, {"accepted": 2, "skipped": 0})
         # The server's last contact, for the status on its form.
-        self.assertIn("seen_at", frappe.cache.hget(CACHE_KEY, self.node.ipv4_address))
+        self.assertIsNotNone(get_seen_at(self.node.ipv4_address, EVENTS_STREAM))
         forget_contacts()
-        self.assertIsNone(frappe.cache.hget(CACHE_KEY, self.node.ipv4_address))
+        self.assertIsNone(get_seen_at(self.node.ipv4_address, EVENTS_STREAM))
         rows = sorted(self.rows(), key=lambda row: row["event"])
         self.assertEqual(
             [(row["event"], row["level"]) for row in rows],

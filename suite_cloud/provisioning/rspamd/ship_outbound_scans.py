@@ -1,8 +1,10 @@
 """Sends the outbound scan records Rspamd wrote to Suite Cloud; suite-cloud-scans.timer runs it each
 minute. Installed by install-rspamd.yml with the Python standard library only.
 
-A file that fails to send stays for the next run. The same batch sent again carries the same
-records in the same order, so Suite Cloud gives it the same id and stores it once.
+A run with nothing to send posts an empty batch, so the node form shows that the shipper works
+while nobody sends mail. A file that fails to send stays for the next run. The same batch sent
+again carries the same records in the same order, so Suite Cloud gives it the same id and stores
+it once.
 """
 
 import json
@@ -29,7 +31,10 @@ def main() -> int:
     PENDING.mkdir(mode=0o700, exist_ok=True)
     take_spool()
     trim_backlog()
-    for path in sorted(PENDING.glob("*.jsonl")):
+    files = sorted(PENDING.glob("*.jsonl"))
+    if not files:
+        return 0 if post(url, token, []) else 1
+    for path in files:
         if not send_file(path, url, token):
             return 1
         path.unlink()

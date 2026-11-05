@@ -98,6 +98,19 @@ Suite Cloud renders the files in Python (`rspamd.get_rspamd_files()`) and passes
 
 **Install Outbound Scanner** on a node, or **Install Outbound Scanners** on a cluster for each running node, creates a Server Job with the callback `after_install_outbound_scanner`. When the last running node of a cluster gets its scanner, Suite Cloud queues a cluster push, which switches the milter on.
 
+## Form status
+
+The Stalwart Node, Egress Gateway and Stalwart Cluster forms show one indicator for each kind of telemetry, from `suite_cloud/telemetry/status.py`. The API notes in the cache when each server last sent each kind. The silence window is **Telemetry Silence Minutes** (30 by default).
+
+| Indicator | Green | Other states |
+| --- | --- | --- |
+| Metrics | Received within the window | Red: none since then. Blue: none received yet |
+| Events | Received within the window | Grey: none since then, which is normal for an idle server. Blue: none received yet |
+| Outbound scan (nodes only) | The shipper checked in within the window | Grey: the mode is Off, or the scanner is not installed. Orange: the scanner is out of date. Red: the shipper is silent. Blue: no check-in yet |
+| Scan records (beside a green Outbound scan, once records arrived) | Records received within the window | Grey: none since then, which is normal while nobody sends |
+
+The cluster form shows one indicator for each kind over its Active and Draining nodes and Active gateways. It takes the worst state and names the servers that need a look by their short name, for example `Metrics: 1 reporting, 1 silent (n2)`. Keep each text short: Frappe squeezes an indicator's dot when its text wraps. While telemetry is off, each form shows only `Telemetry: off`.
+
 ## Telemetry
 
 The events WebHook sends `milter.action-accept`, `milter.action-reply-code`, `milter.action-reject`, `milter.action-discard` and `milter.action-temp-fail` at info level. `milter.io-error` and `milter.timeout` are on the warnings stream. `Elapsed` on `milter.action-accept` is the scan time; the target is a p95 of 150 ms or less for a message without links. `milter.action-reply-code` counts the refused messages. An event carries `span_id` but not the account, so a query joins it to the `smtp.mail-from` event of the same span to get the sender.
@@ -107,7 +120,7 @@ The events WebHook sends `milter.action-accept`, `milter.action-reply-code`, `mi
 Each node records every message it scans for a signed-in sender, and Suite Cloud stores the records in the telemetry warehouse. The **Outbound Spam Scan** dashboard of the Stalwart Mail workbook in Insights reads them.
 
 1. The recorder registers the idempotent symbol `SUITE_CLOUD_SCAN_RECORD`. Rspamd runs it after the score, so it also records refused messages. It appends one JSON line to `/var/lib/rspamd/suite-cloud-scans.jsonl` and opens and closes the file for each line. The line is written in one call, so two proxy processes never mix their lines.
-2. Each minute the timer runs the shipper. The shipper moves the spool to `/var/lib/rspamd/suite-cloud-scans.pending/` and posts it to `suite_cloud.api.telemetry.outbound_scans`, at most 2000 records for each request, with the node's Suite Cloud token.
+2. Each minute the timer runs the shipper. The shipper moves the spool to `/var/lib/rspamd/suite-cloud-scans.pending/` and posts it to `suite_cloud.api.telemetry.outbound_scans`, at most 2000 records for each request, with the node's Suite Cloud token. A run with nothing to send posts an empty batch, which is the shipper's check-in.
 3. If a send fails, the file stays for the next run. The same file gives the same body, so Suite Cloud gives the batch the same id and stores it once. Past 100 MB of files the shipper deletes the oldest. This happens while telemetry is off, because the API then refuses the token.
 4. The API stages a row for each record in `outbound_scans`, and a row for each matched rule in `outbound_scan_symbols`. The warehouse loads both tables every five minutes and prunes them with the other telemetry tables.
 

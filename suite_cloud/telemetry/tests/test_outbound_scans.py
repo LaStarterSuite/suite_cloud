@@ -16,6 +16,7 @@ from suite_cloud.api.telemetry import outbound_scans
 from suite_cloud.api.tenant import InvalidInputError
 from suite_cloud.mail.cluster import rspamd
 from suite_cloud.telemetry import OUTBOUND_SCAN_SYMBOLS, OUTBOUND_SCANS
+from suite_cloud.telemetry.status import SCAN_CHECK_IN, SCAN_RECORDS, forget_contacts, get_seen_at
 from suite_cloud.telemetry.tests.test_push import PushTestCase
 from suite_cloud.tests.fixtures import configure_settings
 
@@ -189,6 +190,20 @@ class TestShipper(OutboundScanTestCase):
         self.shipper.MAX_BACKLOG_BYTES = 2 * (self.shipper.PENDING / "1.jsonl").stat().st_size
         self.shipper.trim_backlog()
         self.assertEqual(sorted(path.name for path in self.shipper.PENDING.iterdir()), ["2.jsonl", "3.jsonl"])
+
+    def test_a_run_with_nothing_to_send_checks_in(self) -> None:
+        forget_contacts()
+        self.addCleanup(forget_contacts)
+        with patch("urllib.request.urlopen", side_effect=self.deliver):
+            self.assertEqual(self.shipper.main(), 0)
+        self.assertEqual([json.loads(body) for body in self.sent], [{"scans": []}])
+        self.assertIsNotNone(get_seen_at(self.node.ipv4_address, SCAN_CHECK_IN))
+        self.assertIsNone(get_seen_at(self.node.ipv4_address, SCAN_RECORDS))  # no records yet
+
+        self.write_spool(scan_record())
+        with patch("urllib.request.urlopen", side_effect=self.deliver):
+            self.shipper.main()
+        self.assertIsNotNone(get_seen_at(self.node.ipv4_address, SCAN_RECORDS))
 
     def test_without_a_token_nothing_is_sent(self) -> None:
         self.write_spool(scan_record())

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from suite_cloud.mail.cluster import bootstrap, egress, server_token
+from suite_cloud.mail.cluster import bootstrap, egress, rspamd, server_token
 from suite_cloud.mail.tests.fixtures import configure_settings, make_cluster, make_node
 from suite_cloud.provisioning.ansible import playbook_task_names
 from suite_cloud.telemetry import install, status
@@ -240,26 +240,87 @@ class TestTelemetryInstall(IntegrationTestCase):
         # A save that leaves the switch as it is changes nothing.
         self.assertEqual(jobs_after(True), [])
 
-    def test_the_status_follows_the_last_batch(self) -> None:
+    def indicators(self, server) -> dict[str, tuple[str, str]]:
+        return {
+            item["stream"]: (item["state"], item["text"])
+            for item in status.server_status(server)["indicators"]
+        }
+
+    def test_each_kind_of_telemetry_has_its_own_indicator(self) -> None:
         status.forget_contacts()
         self.addCleanup(status.forget_contacts)
-        self.assertEqual(status.server_status(self.node)["state"], "unknown")
+        self.node.db_set(
+            {"outbound_scanner_installed": 1, "outbound_scanner_digest": rspamd.get_config_digest()}
+        )
+        self.node.reload()
+        self.assertEqual(
+            {stream: state for stream, (state, _text) in self.indicators(self.node).items()},
+            {status.METRICS: "unknown", status.EVENTS: "unknown", status.SCAN_CHECK_IN: "unknown"},
+        )
+        self.assertEqual(
+            self.indicators(self.node)[status.SCAN_CHECK_IN], ("unknown", "Outbound scan: not checked in yet")
+        )
 
-        status.record_contact(self.node.ipv4_address)
-        status.record_contact(self.gateway.ipv4_address)
-        self.assertEqual(status.server_status(self.gateway)["state"], "ok")
+        for stream in (status.METRICS, status.EVENTS, status.SCAN_CHECK_IN):
+            status.record_contact(self.node.ipv4_address, stream)
+        indicators = self.indicators(self.node)
+        self.assertNotIn(status.SCAN_RECORDS, indicators)  # shown once some arrive
+        self.assertEqual({state for state, _text in indicators.values()}, {"ok"})
+        self.assertRegex(
+            indicators[status.METRICS][1], r"^Metrics: (just now|\d+ seconds? ago)$"
+        )  # the time only
+        self.assertRegex(indicators[status.SCAN_CHECK_IN][1], r"^Outbound scan: (just now|\d+ seconds? ago)$")
+        status.record_contact(self.node.ipv4_address, status.SCAN_RECORDS)
+        self.assertEqual(self.indicators(self.node)[status.SCAN_RECORDS][0], "ok")
 
-        stale = frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2).isoformat()
-        frappe.cache.hset(status.CACHE_KEY, self.node.ipv4_address, {"seen_at": stale})
-        self.assertEqual(status.server_status(self.node)["state"], "silent")
+        # Metrics and the shipper send on a schedule; events only when something happens.
+        stale = {"seen_at": frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2).isoformat()}
+        for stream in (status.METRICS, status.EVENTS, status.SCAN_CHECK_IN):
+            frappe.cache.hset(f"{status.CACHE_KEY}:{stream}", self.node.ipv4_address, stale)
+        indicators = self.indicators(self.node)
+        self.assertEqual(indicators[status.METRICS][0], "silent")
+        self.assertEqual(indicators[status.EVENTS][0], "quiet")
+        self.assertEqual(indicators[status.SCAN_CHECK_IN][0], "silent")
+        self.assertNotIn(status.SCAN_RECORDS, indicators)  # only beside a working shipper
 
+        # The scanner's install state comes before the shipper's check-ins.
+        self.node.outbound_scanner_digest = "older"
+        self.assertEqual(
+            self.indicators(self.node)[status.SCAN_CHECK_IN],
+            ("outdated", "Outbound scan: scanner out of date"),
+        )
+        self.node.outbound_scanner_installed = 0
+        self.assertEqual(self.indicators(self.node)[status.SCAN_CHECK_IN][0], "off")
+
+        # A gateway relays scanned mail, so it has no scan indicator.
+        self.assertEqual(set(self.indicators(self.gateway)), {status.METRICS, status.EVENTS})
+
+        frappe.db.set_single_value("Suite Cloud Settings", "enable_telemetry", 0)
+        clear_config_cache()
+        self.assertEqual(self.indicators(self.node), {status.TELEMETRY: ("off", "Telemetry: off")})
+
+    def test_the_cluster_sums_up_each_kind_over_its_servers(self) -> None:
+        status.forget_contacts()
+        self.addCleanup(status.forget_contacts)
         self.node.db_set("status", "Active")
         self.gateway.db_set("status", "Active")
-        summary = status.cluster_summary(self.cluster)
-        self.assertEqual(summary["state"], "silent")
-        self.assertEqual(summary["message"], f"Telemetry: 1 reporting, 1 silent ({self.node.hostname}).")
-        self.assertEqual(status.get_server_status("Stalwart Node", self.node.name)["state"], "silent")
-        self.assertEqual(status.get_cluster_summary(self.cluster.name)["state"], "silent")
+        status.record_contact(self.gateway.ipv4_address, status.METRICS)
+        stale = {"seen_at": frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-2).isoformat()}
+        frappe.cache.hset(f"{status.CACHE_KEY}:{status.METRICS}", self.node.ipv4_address, stale)
+
+        summary = {
+            item["stream"]: item for item in status.get_cluster_summary(self.cluster.name)["indicators"]
+        }
+        self.assertEqual(
+            (summary[status.METRICS]["state"], summary[status.METRICS]["color"]), ("silent", "red")
+        )
+        short_name = self.node.hostname.removesuffix(f".{self.cluster.hostname}")
+        self.assertEqual(summary[status.METRICS]["text"], f"Metrics: 1 reporting, 1 silent ({short_name})")
+        self.assertEqual(summary[status.EVENTS]["state"], "unknown")
+        self.assertEqual(set(summary), {status.METRICS, status.EVENTS, status.SCAN_CHECK_IN})
+        self.assertEqual(
+            status.get_server_status("Stalwart Node", self.node.name)["hostname"], self.node.hostname
+        )
         self.assertRaises(
             frappe.ValidationError, status.get_server_status, "Stalwart Cluster", self.cluster.name
         )
