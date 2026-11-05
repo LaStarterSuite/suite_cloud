@@ -162,7 +162,7 @@
    "set_only_once": 1
   },
   {
-   "description": "The hostname, as Stalwart's default domain. Nodes, gateways and pools are named under it, e.g. n1.mail.bom.frappemail.com.",
+   "description": "Stalwart's default domain, the same as the hostname. Nodes, gateways and pools are named under it, e.g. n1.mail.bom.frappemail.com.",
    "fieldname": "default_domain",
    "fieldtype": "Data",
    "label": "Default Domain",
@@ -253,7 +253,7 @@
    "fieldtype": "Section Break"
   },
   {
-   "description": "Set automatically. Default when a multi-node cluster has a Redis store.",
+   "description": "Set automatically: Default for a multi-node cluster with a Redis store, else Disabled.",
    "fieldname": "coordinator",
    "fieldtype": "Select",
    "label": "Coordinator",
@@ -389,7 +389,7 @@
   },
   {
    "default": "2000",
-   "description": "Ceiling for every account's Daily Send Limit and every tenant's default, in recipients per UTC day. Also the server's own cap per account while Suite Cloud does not answer.",
+   "description": "Upper limit, in recipients per UTC day, for each account's Daily Send Limit and each tenant default. Stalwart also applies it when Suite Cloud does not answer.",
    "fieldname": "max_daily_send_limit",
    "fieldtype": "Int",
    "label": "Max Daily Send Limit",
@@ -398,7 +398,7 @@
   },
   {
    "default": "10000",
-   "description": "Ceiling for every account's Monthly Send Limit and every tenant's default, in recipients per UTC month.",
+   "description": "Upper limit, in recipients per UTC month, for each account's Monthly Send Limit and each tenant default.",
    "fieldname": "max_monthly_send_limit",
    "fieldtype": "Int",
    "label": "Max Monthly Send Limit",
@@ -511,7 +511,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

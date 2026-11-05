@@ -158,7 +158,7 @@
    "label": "Sending"
   },
   {
-   "description": "Recipients per UTC day. A message to 50 recipients counts as 50. The tenant's default when left empty, at most the cluster's max.",
+   "description": "Recipients per UTC day. A message to 50 recipients counts as 50. Blank uses the tenant default. At most the cluster maximum.",
    "fieldname": "daily_send_limit",
    "fieldtype": "Int",
    "label": "Daily Send Limit",
@@ -170,7 +170,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Recipients per UTC month. The tenant's default when left empty, at most the cluster's max.",
+   "description": "Recipients per UTC month. Blank uses the tenant default. At most the cluster maximum.",
    "fieldname": "monthly_send_limit",
    "fieldtype": "Int",
    "label": "Monthly Send Limit",
@@ -265,7 +265,7 @@
  "in_create": 0,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-11-05 12:00:00.000000",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Mail Account",

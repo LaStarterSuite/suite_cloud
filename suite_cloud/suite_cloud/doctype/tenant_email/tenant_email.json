@@ -33,7 +33,7 @@
    "reqd": 1
   },
   {
-   "description": "e.g. password-reset or account-invite. other if the site did not say.",
+   "description": "e.g. password-reset or account-invite. other when the site gives no type.",
    "fieldname": "email_type",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -132,7 +132,7 @@
  "in_create": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Tenant Email",
