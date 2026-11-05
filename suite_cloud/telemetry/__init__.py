@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pyarrow
 
-TELEMETRY_USER = "telemetry@suite-cloud.internal"  # a server's telemetry token signs this user in
+TELEMETRY_USER = "stalwart@suite-cloud.internal"  # a server's telemetry token signs this user in
 
 
 # The events the Stalwart workbook and the alerts read, at the level Stalwart logs each. The events
