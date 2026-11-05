@@ -9,7 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 
 from suite_cloud.dns.resolver import verify_ptr_record
-from suite_cloud.mail.cluster import bootstrap, dns, naming, server_token
+from suite_cloud.mail.cluster import bootstrap, dns, naming, rspamd, server_token
 from suite_cloud.provisioning.ansible import ping
 from suite_cloud.provisioning.ssh import SSHTarget, scan_host_keys, validate_ssh_user_field
 from suite_cloud.utils import log_exception
@@ -37,6 +37,8 @@ class StalwartNode(Document):
         last_error: DF.SmallText | None
         last_health_at: DF.Datetime | None
         node_id: DF.Int
+        outbound_scanner_digest: DF.Data | None
+        outbound_scanner_installed: DF.Check
         provisioned_at: DF.Datetime | None
         ptr_verified: DF.Check
         role: DF.Literal["full", "frontend", "outbound"]
@@ -228,6 +230,11 @@ class StalwartNode(Document):
         return rotate_token(self)
 
     @frappe.whitelist()
+    def install_outbound_scanner(self) -> str:
+        frappe.only_for("System Manager")
+        return rspamd.install_scanner(self).name
+
+    @frappe.whitelist()
     def drain(self) -> None:
         frappe.only_for("System Manager")
         bootstrap.drain_node(self)
@@ -273,6 +280,9 @@ class StalwartNode(Document):
         from suite_cloud.telemetry.install import mark_token_installed
 
         mark_token_installed(self)
+
+    def after_install_outbound_scanner(self, job: Document) -> None:
+        rspamd.mark_scanner_installed(self, job)
 
 
 def on_doctype_update() -> None:

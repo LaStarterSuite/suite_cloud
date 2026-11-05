@@ -49,6 +49,11 @@ frappe.ui.form.on('Stalwart Node', {
 					),
 				__('Actions'),
 			)
+			frm.add_custom_button(
+				__('Install Outbound Scanner'),
+				() => frm.events.call(frm, 'install_outbound_scanner', __('Queueing the scanner install...')),
+				__('Actions'),
+			)
 		}
 		if (frm.doc.status === 'Draining') {
 			frm.add_custom_button(__('Restore'), () => frm.events.call(frm, 'restore', __('Adding to ingress DNS...')), __('Actions'))

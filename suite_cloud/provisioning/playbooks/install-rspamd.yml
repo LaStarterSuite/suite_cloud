@@ -1,0 +1,70 @@
+---
+# The outbound spam scanner: Rspamd in milter mode on 127.0.0.1:11332, which Stalwart calls at DATA
+# for signed-in senders. Only Stalwart Nodes set install_rspamd; an Egress Gateway skips this play.
+- name: Install Rspamd
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install and configure Rspamd
+      when: install_rspamd | default(false) | bool
+      block:
+        # The Ubuntu package is old and unsupported upstream, so the upstream stable repository.
+        - name: Create the APT keyring directory
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: Add the Rspamd signing key
+          get_url:
+            url: https://rspamd.com/apt-stable/gpg.key
+            dest: /etc/apt/keyrings/rspamd.asc
+            mode: "0644"
+
+        - name: Add the Rspamd repository
+          apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/rspamd.asc] http://rspamd.com/apt-stable/ {{ ansible_distribution_release }} main"
+            filename: rspamd
+            state: present
+
+        - name: Install Rspamd
+          apt:
+            name: "{{ 'rspamd=' ~ rspamd_version ~ '*' if rspamd_version else 'rspamd' }}"
+            state: present
+            update_cache: true
+
+        - name: Write the Rspamd configuration
+          copy:
+            content: "{{ item.value | replace(rspamd_cpu_placeholder, ansible_processor_vcpus | string) }}"
+            dest: "{{ item.key }}"
+            owner: root
+            group: root
+            mode: "0644"
+          loop: "{{ rspamd_files | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          register: rspamd_config_files
+
+        - name: Check the Rspamd configuration
+          command: rspamadm configtest
+          changed_when: false
+
+        - name: Start Rspamd
+          systemd:
+            name: rspamd
+            state: started
+            enabled: true
+          register: rspamd_start
+
+        - name: Reload Rspamd with the new configuration
+          when: rspamd_config_files is changed and rspamd_start is not changed
+          systemd:
+            name: rspamd
+            state: reloaded
+
+        - name: Wait for the milter port
+          wait_for:
+            host: 127.0.0.1
+            port: 11332
+            timeout: 60

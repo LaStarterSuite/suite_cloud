@@ -36,3 +36,4 @@ suite_cloud.patches.v1_0.drop_agent_telemetry_settings
 suite_cloud.patches.v1_0.move_sending_limits_to_suite_cloud
 suite_cloud.patches.v1_0.rename_suite_cloud_token
 suite_cloud.patches.v1_0.rename_telemetry_user
+suite_cloud.patches.v1_0.fill_outbound_scan_defaults

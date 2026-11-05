@@ -231,3 +231,5 @@
         state: enabled
         policy: deny
         direction: incoming
+
+- import_playbook: install-rspamd.yml

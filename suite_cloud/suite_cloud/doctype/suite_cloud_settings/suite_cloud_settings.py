@@ -4,7 +4,7 @@
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import cint
+from frappe.utils import cint, flt
 
 from suite_cloud.utils import clear_config_cache, validate_version
 
@@ -57,10 +57,13 @@ class SuiteCloudSettings(Document):
         max_sites_per_vm: DF.Int
         memory_per_site_mb: DF.Int
         min_free_site_slots: DF.Int
+        outbound_scan_mode: DF.Literal["Off", "Observe", "Enforce"]
+        outbound_scan_reject_score: DF.Float
         public_url: DF.Data | None
         ready_sites_per_region: DF.Int
         reserved_disk_gb: DF.Int
         reserved_memory_mb: DF.Int
+        rspamd_version: DF.Data | None
         send_usage_retention_days: DF.Int
         server_job_timeout: DF.Int
         sign_with_ed25519: DF.Check
@@ -93,6 +96,7 @@ class SuiteCloudSettings(Document):
             self.spam_filter_rules_version, _("Spam Filter Rules Version")
         )
         self.validate_report_retention()
+        self.validate_outbound_scan()
         self.validate_telemetry()
         self.validate_tenant_email_accounts()
         self.validate_hosting()
@@ -110,6 +114,32 @@ class SuiteCloudSettings(Document):
             from suite_cloud.telemetry.install import enqueue_roll_out_telemetry
 
             enqueue_roll_out_telemetry()
+        if before:
+            self.apply_outbound_scan_change(before)
+
+    def validate_outbound_scan(self) -> None:
+        if self.outbound_scan_mode == "Enforce" and flt(self.outbound_scan_reject_score) <= 0:
+            frappe.throw(_("The Outbound Spam Scan Reject Score must be above 0."))
+
+    def apply_outbound_scan_change(self, before: Document) -> None:
+        """Off is in the cluster plan, so each active cluster is pushed again. Observe, Enforce and
+        the reject score are in the nodes' Rspamd files, which only a scanner install writes."""
+
+        from suite_cloud.mail.cluster import push, rspamd
+
+        if (before.outbound_scan_mode == "Off") != (self.outbound_scan_mode == "Off"):
+            for name in frappe.get_all("Stalwart Cluster", {"status": "Active"}, pluck="name"):
+                push.resync_cluster_after_commit(name)
+        before_score, score = (
+            rspamd.get_reject_score(*(doc.get(field) for field in rspamd.SCAN_FIELDS))
+            for doc in (before, self)
+        )
+        if before_score != score:
+            frappe.msgprint(
+                _("Run Install Outbound Scanners on each cluster to apply the new outbound scan settings."),
+                indicator="orange",
+                alert=True,
+            )
 
     def validate_report_retention(self) -> None:
         for field in (
