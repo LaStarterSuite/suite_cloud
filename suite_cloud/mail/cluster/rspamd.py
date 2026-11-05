@@ -44,8 +44,12 @@ def get_rspamd_files() -> dict[str, str]:
         "worker-normal.inc": "enabled = false;\n",
         "worker-controller.inc": 'bind_socket = "127.0.0.1:11334";\n',
         "options.inc": OPTIONS,
-        "settings.conf": settings_conf(get_reject_score(*get_config(SCAN_FIELDS))),
+        "actions.conf": actions_conf(get_reject_score(*get_config(SCAN_FIELDS))),
+        "settings.conf": SETTINGS,
         "logging.inc": LOGGING,
+        # Stalwart signs after the scan, so Rspamd never adds a DKIM or ARC signature.
+        "dkim_signing.conf": "enabled = false;\n",
+        "arc.conf": "enabled = false;\n",
     }
     return {
         **{f"{CONFIG_DIRECTORY}/{name}": content for name, content in files.items()},
@@ -80,24 +84,24 @@ upstream "local" {{
 """
 
 
-def settings_conf(reject_score: float | None) -> str:
-    """The profile for signed-in senders. Without a reject score Rspamd accepts every message and
-    only logs its score."""
+def actions_conf(reject_score: float | None) -> str:
+    """The thresholds for every message the milter sends, which only signed-in senders' are.
+    Without a reject score Rspamd accepts every message and only logs its score."""
 
     reject = "null" if reject_score is None else f"{reject_score:g}"
-    groups = ", ".join(f'"{group}"' for group in DISABLED_GROUPS)
-    return f"""outbound {{
+    return f"""reject = {reject};
+add_header = null;
+greylist = null;
+"""
+
+
+# The profile for signed-in senders: the checks that need Redis, or that judge our own network.
+SETTINGS = f"""outbound {{
   id = "outbound";
   priority = high;
   authenticated = yes;
   apply {{
-    groups_disabled = [{groups}];
-    actions {{
-      reject = {reject};
-      "add header" = null;
-      "rewrite subject" = null;
-      greylist = null;
-    }}
+    groups_disabled = [{", ".join(f'"{group}"' for group in DISABLED_GROUPS)}];
   }}
 }}
 """

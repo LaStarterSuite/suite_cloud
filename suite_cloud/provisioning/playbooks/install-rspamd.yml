@@ -5,6 +5,12 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    # Read after every other file and before local.d, so a hand-made one replaces whole sections.
+    rspamd_top_level_overrides:
+      - /etc/rspamd/rspamd.conf.local
+      - /etc/rspamd/rspamd.conf.local.override
+      - /etc/rspamd/rspamd.conf.override
   tasks:
     - name: Install and configure Rspamd
       when: install_rspamd | default(false) | bool
@@ -41,6 +47,24 @@
             mode: "0755"
           loop: "{{ rspamd_files.keys() | map('dirname') | unique | list }}"
 
+        # Suite Cloud owns the node's Rspamd configuration. A file it does not write, such as a
+        # hand-made actions.conf or rspamd.conf.override, would change what the scanner refuses.
+        - name: Find the Rspamd files Suite Cloud does not write
+          find:
+            paths:
+              - /etc/rspamd/local.d
+              - /etc/rspamd/override.d
+            file_type: any
+            excludes: "*.example"
+          register: rspamd_local_files
+
+        - name: Remove the Rspamd files Suite Cloud does not write
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop: "{{ rspamd_local_files.files | map(attribute='path') | list | union(rspamd_top_level_overrides) | difference(rspamd_files.keys() | list) }}"
+          register: rspamd_removed_files
+
         - name: Write the Rspamd configuration
           copy:
             content: "{{ item.value | replace(rspamd_cpu_placeholder, ansible_processor_vcpus | string) }}"
@@ -65,7 +89,7 @@
           register: rspamd_start
 
         - name: Reload Rspamd with the new configuration
-          when: rspamd_config_files is changed and rspamd_start is not changed
+          when: (rspamd_config_files is changed or rspamd_removed_files is changed) and rspamd_start is not changed
           systemd:
             name: rspamd
             state: reloaded

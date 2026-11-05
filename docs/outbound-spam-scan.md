@@ -65,9 +65,11 @@ Each call runs in the request and runs `ReloadLookupStores` after a change. `Rel
 
 `install-stalwart.yml` imports `install-rspamd.yml`, so provisioning (`bootstrap-cluster.yml`, `configure-node.yml`) and `upgrade-stalwart.yml` install Rspamd too. Only a Stalwart Node's variables set `install_rspamd`. An Egress Gateway skips the play: it relays mail that a node scanned already.
 
-The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), writes the files below, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, waits for port 11332, and starts `suite-cloud-scans.timer`. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound and runs without Redis, so Bayes, neural, rate limits, replies and history are off.
+The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), removes every Rspamd file it does not write, writes the files below, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, waits for port 11332, and starts `suite-cloud-scans.timer`. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound and runs without Redis, so Bayes, neural, rate limits, replies and history are off.
 
-The first six files are in `/etc/rspamd/local.d/`.
+Suite Cloud owns the node's Rspamd configuration. The playbook deletes each file in `/etc/rspamd/local.d/` and `/etc/rspamd/override.d/` that it does not write, except the `*.example` files, and `/etc/rspamd/rspamd.conf.local`, `rspamd.conf.local.override` and `rspamd.conf.override`. A hand edit on a node is removed by the next install. Before this, a hand-made `actions.conf` (every threshold at 1000) and an `rspamd.conf.override` (the settings from a remote map) on the test node let a message with a score of 16.41 through in Enforce.
+
+The files up to `arc.conf` are in `/etc/rspamd/local.d/`.
 
 | File | Content |
 | --- | --- |
@@ -75,8 +77,10 @@ The first six files are in `/etc/rspamd/local.d/`.
 | `worker-normal.inc` | `enabled = false` |
 | `worker-controller.inc` | `127.0.0.1:11334` |
 | `options.inc` | DNS at `127.0.0.1` with a 1 s timeout, `task_timeout = 4s` |
-| `settings.conf` | The `outbound` profile for `authenticated = yes`: the `fuzzy`, `neural`, `statistics`, `asn` and `mx_check` groups off, `reject` at the reject score (`null` in Observe and Off), no header, subject or greylist actions |
+| `actions.conf` | `reject` at the reject score (`null` in Observe and Off). `add_header` and `greylist` are off. The milter sends only signed-in senders' mail, so these are the outbound thresholds |
+| `settings.conf` | The `outbound` profile for `authenticated = yes`: the `fuzzy`, `neural`, `statistics`, `asn` and `mx_check` groups off |
 | `logging.inc` | Notice level to `/var/log/rspamd/rspamd.log`, one line with the user, score and symbols per message |
+| `dkim_signing.conf`, `arc.conf` | `enabled = false`: Stalwart signs the message after the scan |
 | `/etc/rspamd/rspamd.local.lua` | The scan recorder: one JSON line per scanned message to `/var/lib/rspamd/suite-cloud-scans.jsonl` |
 | `/usr/local/lib/suite-cloud/ship_outbound_scans.py` | The shipper: sends the recorded lines to Suite Cloud |
 | `/etc/systemd/system/suite-cloud-scans.service` and `.timer` | Run the shipper each minute, with the node's Suite Cloud token from `/etc/stalwart/stalwart.env` |
@@ -158,7 +162,7 @@ The filters are Date Range (the last 7 days by default), Host, Account and Messa
 
 1. Deploy and migrate. The patch `fill_outbound_scan_defaults` sets Enforce and 15 on an existing site. Nothing changes on a cluster, because no node has the scanner installed.
 2. Set **Outbound Spam Scan Mode** to Observe.
-3. On the test cluster, save the hand-installed Rspamd config of `n1`, because the playbook writes over `local.d` and `/etc/rspamd/rspamd.local.lua`. Then run **Install Outbound Scanners**.
+3. On the test cluster, save the hand-installed Rspamd config of `n1` if it is still needed. The playbook deletes every Rspamd file it does not write (see [Rspamd on each node](#rspamd-on-each-node)). Then run **Install Outbound Scanners**.
 4. Check on the live server that the plan matches the MtaMilter again on `hostname` and `port`, that `protocolVersion` takes `"v6"`, and, with `rspamadm configdump`, the proxy's `reject_message`, `enabled = false` for the normal worker and the group names.
 5. Send GTUBE over SMTP and JMAP, then clean mail, then stop Rspamd and send again, then mark the account as trusted and send GTUBE. Expect a refusal (in Enforce), `milter.action-accept` times under 150 ms, `250` with a `milter.io-error` warning, and `250`. Within six minutes each scanned message shows on the **Outbound Spam Scan** dashboard under its Message-ID. If it does not, check `journalctl -u suite-cloud-scans` on the node.
 6. Run **Install Outbound Scanners** on each production cluster. Leave Observe on for a week and read the scores of signed-in senders on the **Outbound Spam Scan** dashboard. Mark the trusted accounts.

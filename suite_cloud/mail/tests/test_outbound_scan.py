@@ -213,13 +213,17 @@ class TestTrustedAccounts(OutboundScanTestCase):
 class TestRspamd(OutboundScanTestCase):
     def test_the_files_follow_the_mode_and_score(self) -> None:
         files = rspamd.get_rspamd_files()
+        actions = files["/etc/rspamd/local.d/actions.conf"]
+        self.assertEqual(actions, "reject = 15;\nadd_header = null;\ngreylist = null;\n")
         settings = files["/etc/rspamd/local.d/settings.conf"]
-        self.assertIn("reject = 15;", settings)
         self.assertIn('groups_disabled = ["fuzzy", "neural", "statistics", "asn", "mx_check"];', settings)
+        self.assertNotIn("actions", settings)  # actions.conf is the one owner of the thresholds
         proxy = files["/etc/rspamd/local.d/worker-proxy.inc"]
         self.assertIn('bind_socket = "127.0.0.1:11332";', proxy)
         self.assertIn(f"count = {rspamd.CPU_COUNT_PLACEHOLDER};", proxy)
         self.assertEqual(files["/etc/rspamd/local.d/worker-normal.inc"], "enabled = false;\n")
+        for module in ("dkim_signing", "arc"):  # Stalwart signs
+            self.assertEqual(files[f"/etc/rspamd/local.d/{module}.conf"], "enabled = false;\n")
         # Ansible templates the variables it is given, so no file may hold Jinja.
         for path, content in files.items():
             with self.subTest(path):
@@ -227,14 +231,27 @@ class TestRspamd(OutboundScanTestCase):
         digest = rspamd.get_config_digest()
 
         configure_settings(outbound_scan_reject_score=12.5)
-        self.assertIn("reject = 12.5;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/settings.conf"])
+        self.assertIn("reject = 12.5;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/actions.conf"])
         self.assertNotEqual(rspamd.get_config_digest(), digest)
 
         configure_settings(outbound_scan_mode="Observe")
-        self.assertIn("reject = null;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/settings.conf"])
+        self.assertIn("reject = null;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/actions.conf"])
         observe = rspamd.get_config_digest()
         configure_settings(outbound_scan_reject_score=20)
         self.assertEqual(rspamd.get_config_digest(), observe)  # Observe refuses at no score
+
+    def test_the_playbook_removes_rspamd_files_it_does_not_write(self) -> None:
+        """A hand-made actions.conf or rspamd.conf.override on n1 turned the refusals off."""
+
+        names = playbook_task_names("install-rspamd.yml")
+        self.assertLess(
+            names.index("Remove the Rspamd files Suite Cloud does not write"),
+            names.index("Write the Rspamd configuration"),
+        )
+        playbook = (rspamd.SOURCE_DIRECTORY.parent / "playbooks" / "install-rspamd.yml").read_text()
+        for path in ("rspamd.conf.local", "rspamd.conf.local.override", "rspamd.conf.override"):
+            self.assertIn(f"- /etc/rspamd/{path}\n", playbook)
+        self.assertIn("rspamd_removed_files is changed", playbook)  # a removal alone reloads Rspamd
 
     def test_the_node_records_each_scan_and_ships_it(self) -> None:
         from suite_cloud.telemetry.tests.test_outbound_scans import load_shipper
