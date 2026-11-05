@@ -4,7 +4,7 @@ Suite Cloud scans each message that a signed-in Mail Account sends, before Stalw
 
 Stalwart's built-in filter never scores a signed-in sender, whatever `MtaStageData.enableSpamFilter` says (`spam_classify` in `crates/smtp/src/inbound/spam.rs`). So each node runs Rspamd as a milter on `127.0.0.1:11332`.
 
-The code is in `suite_cloud/mail/cluster/outbound_scan.py` (the milter and the trusted accounts) and `suite_cloud/mail/cluster/rspamd.py` (the Rspamd files and the install state of each node). The playbook is `suite_cloud/provisioning/playbooks/install-rspamd.yml`.
+The code is in `suite_cloud/mail/cluster/outbound_scan.py` (the milter and the trusted accounts), `suite_cloud/mail/cluster/rspamd.py` (the node files and the install state of each node) and `suite_cloud/telemetry/outbound_scans.py` (the scan records). The scan recorder and its shipper are in `suite_cloud/provisioning/rspamd/`. The playbook is `suite_cloud/provisioning/playbooks/install-rspamd.yml`.
 
 ## Request flow
 
@@ -65,7 +65,9 @@ Each call runs in the request and runs `ReloadLookupStores` after a change. `Rel
 
 `install-stalwart.yml` imports `install-rspamd.yml`, so provisioning (`bootstrap-cluster.yml`, `configure-node.yml`) and `upgrade-stalwart.yml` install Rspamd too. Only a Stalwart Node's variables set `install_rspamd`. An Egress Gateway skips the play: it relays mail that a node scanned already.
 
-The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), writes the files under `/etc/rspamd/local.d/`, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, and waits for port 11332. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound and runs without Redis, so Bayes, neural, rate limits, replies and history are off.
+The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), writes the files below, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, waits for port 11332, and starts `suite-cloud-scans.timer`. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound and runs without Redis, so Bayes, neural, rate limits, replies and history are off.
+
+The first six files are in `/etc/rspamd/local.d/`.
 
 | File | Content |
 | --- | --- |
@@ -75,6 +77,9 @@ The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is 
 | `options.inc` | DNS at `127.0.0.1` with a 1 s timeout, `task_timeout = 4s` |
 | `settings.conf` | The `outbound` profile for `authenticated = yes`: the `fuzzy`, `neural`, `statistics`, `asn` and `mx_check` groups off, `reject` at the reject score (`null` in Observe and Off), no header, subject or greylist actions |
 | `logging.inc` | Notice level to `/var/log/rspamd/rspamd.log`, one line with the user, score and symbols per message |
+| `/etc/rspamd/rspamd.local.lua` | The scan recorder: one JSON line per scanned message to `/var/lib/rspamd/suite-cloud-scans.jsonl` |
+| `/usr/local/lib/suite-cloud/ship_outbound_scans.py` | The shipper: sends the recorded lines to Suite Cloud |
+| `/etc/systemd/system/suite-cloud-scans.service` and `.timer` | Run the shipper each minute, with the node's Suite Cloud token from `/etc/stalwart/stalwart.env` |
 
 The profile keeps the URL blocklists, phishing, MIME and attachment checks, and the header and body rules. A taken-over account sends mostly links, so the URL checks are the most useful ones. `milter_headers` keeps `skip_authenticated = true`, so outbound mail gets no `X-Spam-*` header.
 
@@ -93,6 +98,49 @@ Suite Cloud renders the files in Python (`rspamd.get_rspamd_files()`) and passes
 
 The events WebHook sends `milter.action-accept`, `milter.action-reply-code`, `milter.action-reject`, `milter.action-discard` and `milter.action-temp-fail` at info level. `milter.io-error` and `milter.timeout` are on the warnings stream. `Elapsed` on `milter.action-accept` is the scan time; the target is a p95 of 150 ms or less for a message without links. `milter.action-reply-code` counts the refused messages. An event carries `span_id` but not the account, so a query joins it to the `smtp.mail-from` event of the same span to get the sender.
 
+## Scan records
+
+Each node records every message it scans for a signed-in sender, and Suite Cloud stores the records in the telemetry warehouse. The **Outbound Spam Scan** dashboard of the Stalwart Mail workbook in Insights reads them.
+
+1. The recorder registers the idempotent symbol `SUITE_CLOUD_SCAN_RECORD`. Rspamd runs it after the score, so it also records refused messages. It appends one JSON line to `/var/lib/rspamd/suite-cloud-scans.jsonl` and opens and closes the file for each line. The line is written in one call, so two proxy processes never mix their lines.
+2. Each minute the timer runs the shipper. The shipper moves the spool to `/var/lib/rspamd/suite-cloud-scans.pending/` and posts it to `suite_cloud.api.telemetry.outbound_scans`, at most 2000 records for each request, with the node's Suite Cloud token.
+3. If a send fails, the file stays for the next run. The same file gives the same body, so Suite Cloud gives the batch the same id and stores it once. Past 100 MB of files the shipper deletes the oldest. This happens while telemetry is off, because the API then refuses the token.
+4. The API stages a row for each record in `outbound_scans`, and a row for each matched rule in `outbound_scan_symbols`. The warehouse loads both tables every five minutes and prunes them with the other telemetry tables.
+
+Nothing in the scan waits for Suite Cloud: the recorder only writes a local file. If Suite Cloud is down, sending is not slower.
+
+| Record field | Column | Content |
+| --- | --- | --- |
+| `time` | `timestamp` | When Rspamd finished the scan, in UTC |
+| `user` | `account` | The signed-in login, in lowercase. `account_domain` is its domain |
+| `envelope_from` | `envelope_from` | The SMTP `MAIL FROM` address |
+| `header_from` | `header_from` | The address of the `From` header |
+| `message_id` | `message_id` | The `Message-ID` header |
+| `queue_id` | `queue_id` | Stalwart's queue id, when the milter sends it |
+| `client_ip` | `client_ip` | The address the sender connected from |
+| `recipients` | `recipients` | The number of SMTP recipients. The addresses are not recorded |
+| `size` | `size` | The message size in bytes |
+| `action` | `action` | Rspamd's action: `reject` when it refused the message, else `no action` |
+| `score` | `score` | Rspamd's score |
+| `scan_time` | `scan_time` | Milliseconds from the start of the scan to the record |
+| `symbols` | `symbols`, and the `outbound_scan_symbols` rows | `{rule: score}` of each matched rule |
+| | `mode`, `reject_score` | The settings when the batch arrived, so Observe shows what Enforce would refuse |
+
+The subject, the body and the recipient addresses are not recorded.
+
+| Dashboard chart | Shows |
+| --- | --- |
+| Outbound Scan Readings | Scanned, refused and over-the-score messages, and the median scan time |
+| Outbound Scan Results | Passed, over the reject score but not refused (Observe), and refused messages per day |
+| Outbound Scores | Messages per score band of one point. Use it to set the reject score |
+| Rules That Raised Scores | The rules that added to a score most often |
+| Outbound Scan Time (ms) | The median and slowest scan per hour |
+| Outbound Scores by Account | Each sender's message count, median and highest score, and refusals |
+| Scanned Messages | One row per message, newest first |
+| Rules per Message | Each rule that matched each message and what it added |
+
+The filters are Date Range (the last 7 days by default), Host, Account and Message ID. To check one test message, put its `Message-ID` in the Message ID filter: Scanned Messages shows its score and action, and Rules per Message shows why. The records reach the dashboard up to six minutes after the send: one minute for the timer and five for the warehouse load.
+
 ## Accepted gaps
 
 | Case | Effect |
@@ -104,14 +152,15 @@ The events WebHook sends `milter.action-accept`, `milter.action-reply-code`, `mi
 | A sender who sends test messages | Can learn what the scanner refuses |
 | No Redis | No Bayes, neural or reply learning. Scores come from rules and blocklists only |
 | A refused message | The sending-limits hook counted its recipients at RCPT, so they still count |
+| Records while telemetry is off, or Suite Cloud is down for a long time | The node keeps 100 MB of them, then deletes the oldest |
 
 ## Roll-out
 
 1. Deploy and migrate. The patch `fill_outbound_scan_defaults` sets Enforce and 15 on an existing site. Nothing changes on a cluster, because no node has the scanner installed.
 2. Set **Outbound Spam Scan Mode** to Observe.
-3. On the test cluster, save the hand-installed Rspamd config of `n1`, because the playbook writes over `local.d`. Then run **Install Outbound Scanners**.
+3. On the test cluster, save the hand-installed Rspamd config of `n1`, because the playbook writes over `local.d` and `/etc/rspamd/rspamd.local.lua`. Then run **Install Outbound Scanners**.
 4. Check on the live server that the plan matches the MtaMilter again on `hostname` and `port`, that `protocolVersion` takes `"v6"`, and, with `rspamadm configdump`, the proxy's `reject_message`, `enabled = false` for the normal worker and the group names.
-5. Send GTUBE over SMTP and JMAP, then clean mail, then stop Rspamd and send again, then mark the account as trusted and send GTUBE. Expect a refusal (in Enforce), `milter.action-accept` times under 150 ms, `250` with a `milter.io-error` warning, and `250`.
-6. Run **Install Outbound Scanners** on each production cluster. Leave Observe on for a week and read the scores of signed-in senders in `/var/log/rspamd/rspamd.log`. Mark the trusted accounts.
-7. Set the reject score from the logs, set the mode to Enforce, and run **Install Outbound Scanners** on each cluster again.
-8. Watch `milter.action-reply-code` and the scan time in Insights for the first days.
+5. Send GTUBE over SMTP and JMAP, then clean mail, then stop Rspamd and send again, then mark the account as trusted and send GTUBE. Expect a refusal (in Enforce), `milter.action-accept` times under 150 ms, `250` with a `milter.io-error` warning, and `250`. Within six minutes each scanned message shows on the **Outbound Spam Scan** dashboard under its Message-ID. If it does not, check `journalctl -u suite-cloud-scans` on the node.
+6. Run **Install Outbound Scanners** on each production cluster. Leave Observe on for a week and read the scores of signed-in senders on the **Outbound Spam Scan** dashboard. Mark the trusted accounts.
+7. Set the reject score from the Outbound Scores chart, set the mode to Enforce, and run **Install Outbound Scanners** on each cluster again.
+8. Watch the refusals and the scan time on the **Outbound Spam Scan** dashboard for the first days.
