@@ -120,7 +120,7 @@ cluster hostname's DNS, which the health check after the upgrade needs), **Sync 
 again, **Check Drift** reports what differs from it without changing anything, and **Install Suite Cloud Tokens**
 installs each server's Suite Cloud token; the cluster, node and gateway forms show when each server last
 reported. Suite Cloud enforces the [sending limits](docs/sending-limits.md) of Mail Accounts through an
-MTA Hook in the cluster plan.
+MTA Hook in the cluster plan. Rspamd on each node runs the [outbound spam scan](docs/outbound-spam-scan.md) of signed-in senders through an MtaMilter in the cluster plan; **Install Outbound Scanners** installs it.
 
 ### Telemetry
 
