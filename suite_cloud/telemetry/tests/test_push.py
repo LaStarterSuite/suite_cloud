@@ -257,6 +257,18 @@ class TestWebhook(PushTestCase):
         self.assertIn("5 events skipped", log_error.call_args.args[0])
         self.assertEqual(len(self.rows()), 1)
 
+    def test_the_outbound_scan_events_arrive_on_the_events_stream(self) -> None:
+        names = (
+            "milter.action-accept",
+            "milter.action-reply-code",
+            "milter.action-reject",
+            "milter.action-discard",
+            "milter.action-temp-fail",
+        )
+        batch = [webhook_event(str(index), name, elapsed=12) for index, name in enumerate(names)]
+        self.assertEqual(self.push("events", batch), {"accepted": len(names), "skipped": 0})
+        self.assertEqual({(row["event"], row["level"]) for row in self.rows()}, {(n, "info") for n in names})
+
     def test_a_resent_batch_keeps_its_id(self) -> None:
         batch = [webhook_event("1"), webhook_event("2")]
         self.push("events", batch)
