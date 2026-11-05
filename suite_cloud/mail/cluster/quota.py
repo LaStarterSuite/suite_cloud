@@ -17,7 +17,6 @@ HOOK_METHOD = "/api/v2/method/suite_cloud.api.sending_limits.check"
 HOOK_TIMEOUT_MS = 1000  # covers the connect too; Stalwart accepts the recipient after it
 # MtaHook has no description, and its URL follows the Public URL, so this header names the hook.
 HOOK_HEADER = "X-Suite-Cloud-Hook"
-AGENT_HOOK_URL = "http://127.0.0.1:8095/hooks/quota"  # the retired agent's hook
 BACKSTOP_DESCRIPTION = "suite-cloud-quota-backstop"
 DAY_MS = 86_400_000
 SIGNED_IN = {"match": as_list([{"if": "!is_empty(authenticated_as)", "then": "true"}]), "else": "false"}
@@ -25,14 +24,7 @@ NEVER = {"match": as_list([]), "else": "false"}
 
 
 def cluster_operations(cluster: Document) -> list[dict]:
-    return [retire_operation(), hook_operation(cluster), backstop_operation(cluster)]
-
-
-def retire_operation() -> dict:
-    """Removes the agent's loopback hook, which the new hook does not match. On a cluster without
-    it the operation destroys nothing. Remove it once every cluster pushed once."""
-
-    return {"@type": "destroy", "object": "MtaHook", "value": {"url": AGENT_HOOK_URL}}
+    return [hook_operation(cluster), backstop_operation(cluster)]
 
 
 def hook_operation(cluster: Document) -> dict:

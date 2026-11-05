@@ -629,17 +629,16 @@ class TestTenantSendLimits(SendingLimitsTestCase):
 
 
 class TestQuotaPlan(SendingLimitsTestCase):
-    def test_the_plan_retires_the_agent_hook_and_carries_suite_cloud_s(self) -> None:
+    def test_the_plan_carries_suite_cloud_s_hook(self) -> None:
         configure_settings(enable_telemetry=0, public_url="https://cloud.example.test")
         operations = plan.cluster_plan(self.cluster)
         hooks = [op for op in operations if op["object"] == "MtaHook"]
         self.assertEqual(
             [(op["@type"], op.get("matchOn")) for op in hooks],
-            [("destroy", None), ("upsert", ["httpHeaders"])],
+            [("upsert", ["httpHeaders"])],
         )
-        self.assertEqual(hooks[0]["value"], {"url": "http://127.0.0.1:8095/hooks/quota"})
 
-        hook = hooks[1]["value"]["sending-limits"]
+        hook = hooks[0]["value"]["sending-limits"]
         self.assertEqual(
             hook["url"], "https://cloud.example.test/api/v2/method/suite_cloud.api.sending_limits.check"
         )
@@ -690,8 +689,7 @@ class TestQuotaPlan(SendingLimitsTestCase):
         self.assertIn("MtaHook", recovery)
         self.assertNotIn("MtaInboundThrottle", recovery)
 
-    def test_a_push_swaps_the_agent_hook_for_suite_cloud_s(self) -> None:
-        self.fake._add("MtaHook", {"url": "http://127.0.0.1:8095/hooks/quota", "stages": {"data": True}})
+    def test_a_push_keeps_one_suite_cloud_hook(self) -> None:
         self.cluster.push_config()
         self.cluster.push_config()  # a second push finds the hook by its header
         hooks = self.fake.all("MtaHook")
