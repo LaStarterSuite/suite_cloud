@@ -1,7 +1,9 @@
-"""The telemetry API: Stalwart pushes its events and metrics, and asks about sending limits.
+"""The telemetry API: Stalwart pushes its events and metrics, and asks about sending limits; each
+node's scan shipper pushes what its Rspamd scored.
 
-Stalwart sends ``Authorization: Bearer <key>.<secret>``, the Suite Cloud token of the one node or
-gateway that sent the request (``server_token``). ``webhook`` and ``otlp`` take any server's token
+Stalwart and the shipper send ``Authorization: Bearer <key>.<secret>``, the Suite Cloud token of the
+one node or gateway that sent the request (``server_token``). ``webhook``, ``otlp`` and
+``outbound_scans`` take any server's token
 while telemetry is on; the sending-limit hook (``suite_cloud.api.sending_limits``) takes a Stalwart
 Node's whatever telemetry is set to. The ``authenticate`` auth hook checks the token and runs the
 request as the telemetry user, which holds no role, so a token opens nothing but these methods. A
@@ -21,7 +23,8 @@ from werkzeug.wrappers import Response
 
 from suite_cloud.api.tenant import InvalidInputError, assert_arguments, throttle
 from suite_cloud.mail.cluster import server_token
-from suite_cloud.telemetry import EVENTS, METRICS, TELEMETRY_USER
+from suite_cloud.telemetry import EVENTS, METRICS, OUTBOUND_SCAN_SYMBOLS, OUTBOUND_SCANS, TELEMETRY_USER
+from suite_cloud.telemetry import outbound_scans as scans_module
 from suite_cloud.telemetry.push import (
     STREAM_EVENTS,
     get_batch_id,
@@ -37,6 +40,7 @@ API_PATHS = ("/api/v2/method/suite_cloud.api.telemetry.", "/api/method/suite_clo
 HOOK_PATHS = ("/api/v2/method/suite_cloud.api.sending_limits.", "/api/method/suite_cloud.api.sending_limits.")
 DEFAULT_REQUESTS_PER_MINUTE = 300  # the settings' defaults, used until the site has them
 WEBHOOK_EVENT_LIMIT = 65536  # what one request may stage; Stalwart sends every waiting event at once
+SCAN_LIMIT = 5000  # the shipper sends 2000 records per request
 SOURCE = "stalwart"
 
 
@@ -158,6 +162,30 @@ def otlp() -> Response:
         Spool().write(METRICS, METRICS.get_batch(envelope, rows), envelope["batch_id"])
     record_contact(server.ipv4_address)
     return Response(status=200)  # an empty ExportMetricsServiceResponse
+
+
+@frappe.whitelist(methods=["POST"])
+@push_api
+def outbound_scans(scans: list) -> dict:
+    """The scan shipper of a node: ``{"scans": [record]}``, one record per message Rspamd scanned
+    for a signed-in sender. A record that does not parse is skipped and counted in one Error Log."""
+
+    if len(scans) > SCAN_LIMIT:
+        frappe.throw(_("Send at most {0} scans in one request.").format(SCAN_LIMIT), InvalidInputError)
+    server = frappe.local.stalwart_server
+    rows, symbol_rows, problems = scans_module.get_scan_rows(scans)
+    if problems:
+        log_error(
+            f"Outbound scans from {server.hostname}: {len(problems)} records skipped",
+            "\n".join(problems[:20]),
+        )
+    envelope = get_server_envelope(server, scans_module.get_batch_id(server.name, scans))
+    spool = Spool()
+    for table, table_rows in ((OUTBOUND_SCANS, rows), (OUTBOUND_SCAN_SYMBOLS, symbol_rows)):
+        if table_rows:
+            spool.write(table, table.get_batch(envelope, table_rows), envelope["batch_id"])
+    record_contact(server.ipv4_address)
+    return {"accepted": len(rows), "skipped": len(problems)}
 
 
 def get_server_envelope(server: frappe._dict, batch_id: str) -> dict:

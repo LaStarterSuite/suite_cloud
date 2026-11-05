@@ -8,7 +8,7 @@ from unittest.mock import call, patch
 import frappe
 
 from suite_cloud.api.mail import accounts, domains
-from suite_cloud.mail.cluster import bootstrap, egress, outbound_scan, plan, push, quota, rspamd
+from suite_cloud.mail.cluster import bootstrap, egress, outbound_scan, plan, push, quota, rspamd, telemetry
 from suite_cloud.mail.stalwart.errors import StalwartError
 from suite_cloud.mail.tests import fake_stalwart
 from suite_cloud.mail.tests.fixtures import make_node
@@ -235,6 +235,30 @@ class TestRspamd(OutboundScanTestCase):
         observe = rspamd.get_config_digest()
         configure_settings(outbound_scan_reject_score=20)
         self.assertEqual(rspamd.get_config_digest(), observe)  # Observe refuses at no score
+
+    def test_the_node_records_each_scan_and_ships_it(self) -> None:
+        from suite_cloud.telemetry.tests.test_outbound_scans import load_shipper
+
+        files = rspamd.get_rspamd_files()
+        recorder = files[rspamd.RECORDER_PATH]
+        self.assertIn("type = 'idempotent'", recorder)  # runs after the score, refused mail too
+        self.assertIn(f'local SPOOL = "{load_shipper().SPOOL}"', recorder)
+        self.assertEqual(
+            files[rspamd.SHIPPER_PATH], (rspamd.SOURCE_DIRECTORY / "ship_outbound_scans.py").read_text()
+        )
+        service = files["/etc/systemd/system/suite-cloud-scans.service"]
+        self.assertIn(f"Environment=SUITE_CLOUD_SCANS_URL={telemetry.api_url('outbound_scans')}", service)
+        self.assertIn("EnvironmentFile=-/etc/stalwart/stalwart.env", service)  # the node's token
+        self.assertIn(f"ExecStart=/usr/bin/python3 {rspamd.SHIPPER_PATH}", service)
+        self.assertIn("OnUnitActiveSec=1min", files["/etc/systemd/system/suite-cloud-scans.timer"])
+
+        names = playbook_task_names("install-rspamd.yml")
+        self.assertLess(
+            names.index("Create the configuration directories"), names.index("Write the Rspamd configuration")
+        )
+        self.assertLess(
+            names.index("Reload systemd with the scan shipper"), names.index("Start the scan shipper timer")
+        )
 
     def test_only_a_node_installs_rspamd(self) -> None:
         variables = bootstrap.build_node_variables({"node": self.node.name})

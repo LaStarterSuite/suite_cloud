@@ -4,12 +4,13 @@ what it last wrote."""
 
 import hashlib
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import frappe
 from frappe.utils import flt
 
-from suite_cloud.mail.cluster import push, server_token
+from suite_cloud.mail.cluster import push, server_token, telemetry
 from suite_cloud.suite_cloud.doctype.server_job.server_job import create_server_job
 from suite_cloud.utils import get_config
 
@@ -20,6 +21,10 @@ PLAYBOOK = "install-rspamd.yml"
 CALLBACK = "after_install_outbound_scanner"
 NODE_BUILDER = "suite_cloud.mail.cluster.bootstrap.build_node_variables"
 CONFIG_DIRECTORY = "/etc/rspamd/local.d"
+SOURCE_DIRECTORY = Path(__file__).resolve().parents[2] / "provisioning" / "rspamd"
+RECORDER_PATH = "/etc/rspamd/rspamd.local.lua"
+SHIPPER_PATH = "/usr/local/lib/suite-cloud/ship_outbound_scans.py"
+SHIPPER_UNIT = "suite-cloud-scans"
 MILTER_HOST = "127.0.0.1"
 MILTER_PORT = 11332
 CPU_COUNT_PLACEHOLDER = "__CPU_COUNT__"  # the playbook puts the node's vCPU count here
@@ -31,7 +36,8 @@ SCAN_FIELDS = ("outbound_scan_mode", "outbound_scan_reject_score")  # what the f
 
 
 def get_rspamd_files() -> dict[str, str]:
-    """``{path: content}`` of every file the playbook writes, from the current settings."""
+    """``{path: content}`` of every file the playbook writes, from the current settings: Rspamd's
+    own, the scan recorder, and the shipper that sends its records to Suite Cloud."""
 
     files = {
         "worker-proxy.inc": worker_proxy(),
@@ -41,7 +47,13 @@ def get_rspamd_files() -> dict[str, str]:
         "settings.conf": settings_conf(get_reject_score(*get_config(SCAN_FIELDS))),
         "logging.inc": LOGGING,
     }
-    return {f"{CONFIG_DIRECTORY}/{name}": content for name, content in files.items()}
+    return {
+        **{f"{CONFIG_DIRECTORY}/{name}": content for name, content in files.items()},
+        RECORDER_PATH: (SOURCE_DIRECTORY / "scan_recorder.lua").read_text(),
+        SHIPPER_PATH: (SOURCE_DIRECTORY / "ship_outbound_scans.py").read_text(),
+        f"/etc/systemd/system/{SHIPPER_UNIT}.service": shipper_service(),
+        f"/etc/systemd/system/{SHIPPER_UNIT}.timer": SHIPPER_TIMER,
+    }
 
 
 def get_config_digest(files: dict[str, str] | None = None) -> str:
@@ -97,6 +109,34 @@ OPTIONS = """dns {
   retransmits = 2;
 }
 task_timeout = 4s;
+"""
+
+
+def shipper_service() -> str:
+    """The node's Suite Cloud token comes from Stalwart's environment file."""
+
+    return f"""[Unit]
+Description=Send the outbound scan records to Suite Cloud
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/stalwart/stalwart.env
+Environment=SUITE_CLOUD_SCANS_URL={telemetry.api_url("outbound_scans")}
+ExecStart=/usr/bin/python3 {SHIPPER_PATH}
+"""
+
+
+SHIPPER_TIMER = """[Unit]
+Description=Send the outbound scan records to Suite Cloud each minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
 """
 
 LOGGING = """type = "file";
