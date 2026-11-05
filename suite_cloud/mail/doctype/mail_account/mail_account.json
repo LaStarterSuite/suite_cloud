@@ -25,6 +25,7 @@
   "daily_send_limit",
   "column_break_sending_limits",
   "monthly_send_limit",
+  "skip_outbound_scan",
   "quotas_section",
   "used_disk_bytes",
   "quotas",
@@ -151,10 +152,10 @@
    "options": "Mail Credential"
   },
   {
-   "description": "Limits on outgoing mail. Applied about one minute after save.",
+   "description": "Limits and checks on outgoing mail. A limit applies about one minute after save.",
    "fieldname": "sending_limits_section",
    "fieldtype": "Section Break",
-   "label": "Sending Limits"
+   "label": "Sending"
   },
   {
    "description": "Recipients per UTC day. A message to 50 recipients counts as 50. The tenant's default when left empty, at most the cluster's max.",
@@ -175,6 +176,14 @@
    "label": "Monthly Send Limit",
    "non_negative": 1,
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Mail from this account is sent without the outbound spam scan. Set it only for an account you trust.",
+   "fieldname": "skip_outbound_scan",
+   "fieldtype": "Check",
+   "label": "Skip Outbound Spam Scan",
+   "permlevel": 1
   },
   {
    "fieldname": "quotas_section",
@@ -256,7 +265,7 @@
  "in_create": 0,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-05 12:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Mail Account",
@@ -273,6 +282,12 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
+   "write": 1
+  },
+  {
+   "permlevel": 1,
+   "read": 1,
+   "role": "System Manager",
    "write": 1
   },
   {

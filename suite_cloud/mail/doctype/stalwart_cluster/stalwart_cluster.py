@@ -10,7 +10,17 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 from redis.exceptions import LockNotOwnedError
 
-from suite_cloud.mail.cluster import bootstrap, dns, egress, naming, plan, push, reconcile
+from suite_cloud.mail.cluster import (
+    bootstrap,
+    dns,
+    egress,
+    naming,
+    outbound_scan,
+    plan,
+    push,
+    reconcile,
+    rspamd,
+)
 from suite_cloud.mail.stalwart import forget_sessions, get_admin_client, get_client
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.provisioning.ssh import generate_keypair, validate_ssh_user_field
@@ -116,6 +126,9 @@ class StalwartCluster(Document):
 
     def after_insert(self) -> None:
         dns.sync_spf_record(self)
+
+    def onload(self) -> None:
+        self.set_onload("outdated_scanner_nodes", rspamd.get_outdated_nodes(self))
 
     def on_update(self) -> None:
         before = self.get_doc_before_save()
@@ -283,11 +296,13 @@ class StalwartCluster(Document):
             return self.apply_config()
 
     def apply_config(self) -> dict:
-        """Pushes the plan; the caller holds the push lock."""
+        """Pushes the plan, then repairs the trusted accounts' keys a failed save or a hand edit
+        left wrong; the caller holds the push lock."""
 
         rendered = plan.cluster_plan(self)
         result = self.get_client().apply(rendered)
         self.get_client().reload_settings()
+        outbound_scan.sync_exempt_accounts(self)
         self.bump_config_version(rendered)
         self.db_set(
             {"last_config_sync_at": now(), "last_config_sync_error": None, "drift_report": None},
@@ -369,6 +384,14 @@ class StalwartCluster(Document):
         from suite_cloud.telemetry.install import install_tokens
 
         return install_tokens(self)
+
+    @frappe.whitelist()
+    def install_outbound_scanners(self) -> list[str]:
+        """Installs Rspamd with the current settings on every running node. The milter is switched
+        on once all of them have it."""
+
+        frappe.only_for("System Manager")
+        return rspamd.install_scanners(self)
 
 
 def on_doctype_update() -> None:

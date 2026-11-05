@@ -49,6 +49,7 @@ QUERY_FILTERS = {
     "DkimSignature": {"domainId", "memberTenantId"},
     "Role": {"text"},
     "Tenant": {"text"},
+    "MemoryLookupKey": {"namespace"},
     "DmarcExternalReport": {
         "domain",
         "totalFailedSessions",

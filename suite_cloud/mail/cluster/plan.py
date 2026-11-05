@@ -3,9 +3,9 @@
 Two plans exist. The bootstrap plan is applied once on the first node in bootstrap mode and
 only names the stores and hostnames (Stalwart provisions everything else with defaults).
 The cluster plan holds the objects Suite Cloud manages afterwards (roles, coordinator, ACME,
-DNS provider, DNS resolver, default domain, system settings, spam rules source, licences) and is
-re-applied on every sync. Its cluster roles, DNS resolver and SpamSettings are also the defaults
-plan, applied before the first normal start.
+DNS provider, DNS resolver, default domain, system settings, spam rules source, licences, sending
+limits, outbound scan) and is re-applied on every sync. Its cluster roles, DNS resolver and
+SpamSettings are also the defaults plan, applied before the first normal start.
 """
 
 import hashlib
@@ -231,6 +231,7 @@ def cluster_plan(cluster: Document) -> list[dict]:
 
     plan.extend(egress_operations(cluster))
     plan.extend(quota_operations(cluster))
+    plan.extend(outbound_scan_operations(cluster))
     return plan
 
 
@@ -390,6 +391,15 @@ def quota_operations(cluster: Document) -> list[dict]:
     """The sending-limit hook and its backstop; filled in by suite_cloud.mail.cluster.quota."""
 
     from suite_cloud.mail.cluster.quota import cluster_operations  # it builds on this module
+
+    return cluster_operations(cluster)
+
+
+def outbound_scan_operations(cluster: Document) -> list[dict]:
+    """The milter that scans signed-in senders' mail; filled in by
+    suite_cloud.mail.cluster.outbound_scan."""
+
+    from suite_cloud.mail.cluster.outbound_scan import cluster_operations  # it builds on this module
 
     return cluster_operations(cluster)
 
