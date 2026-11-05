@@ -201,12 +201,12 @@ class PlanApplier:
             raise ValueError(f"update of {object_type} needs an id")
 
     def _destroy(self, operation: dict) -> None:
+        """Like the CLI, sends ``value`` as the query filter, so the type must support it."""
+
         service = self.client.objects(operation["object"])
-        wanted = self._resolve(operation.get("value") or {})
-        for obj in service.get_all():
-            if all(obj.get(k) == v for k, v in wanted.items()):
-                service.delete(obj["id"])
-                self.result.destroyed.append(obj["id"])
+        for id in service.query_ids(filter=self._resolve(operation.get("value") or {})):
+            service.delete(id)
+            self.result.destroyed.append(id)
 
     # --- references -------------------------------------------------------
 

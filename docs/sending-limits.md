@@ -58,11 +58,10 @@ The Mail Account form shows the stored totals: orange from 80% of a limit, red a
 
 ## Stalwart config
 
-The cluster plan holds three operations, from `quota.cluster_operations()`:
+The cluster plan holds two operations, from `quota.cluster_operations()`:
 
 | Operation | Purpose |
 | --- | --- |
-| `destroy` MtaHook with `url: http://127.0.0.1:8095/hooks/quota` | Removes the hook of the retired Suite Cloud Agent. It destroys nothing on a cluster without it. Remove it once every cluster pushed once |
 | `upsert` MtaHook `sending-limits` | `enable` for signed-in sessions only, `stages: rcpt`, `timeout: 1000`, `tempFailOnError: false`, the calling node's `SUITE_CLOUD_TOKEN` as the bearer, and the header `X-Suite-Cloud-Hook: sending-limits`. It stays switched off until every Provisioned, Active and Draining node of the cluster has **Suite Cloud Token Installed**, since a reload that names a variable a running node lacks fails. The plan matches the hook on the header, so a **Public URL** change updates it in place |
 | `upsert` MtaInboundThrottle `suite-cloud-quota-backstop` | Caps every signed-in account at the cluster's **Max Daily Send Limit** messages per UTC day, checked at MAIL FROM. Always on |
 

@@ -6,7 +6,7 @@ from frappe.tests import UnitTestCase
 from suite_cloud.mail.stalwart.client import StalwartClient
 from suite_cloud.mail.stalwart.connection import ConnectionInfo, JMAPConnection
 from suite_cloud.mail.stalwart.credentials import Credential
-from suite_cloud.mail.stalwart.directory import Account, Domain, EmailAlias, Group, MailingList
+from suite_cloud.mail.stalwart.directory import Account, Domain, EmailAlias, Group, MailingList, Role
 from suite_cloud.mail.stalwart.errors import (
     StalwartRejectedError,
     StalwartUnauthorizedError,
@@ -313,6 +313,17 @@ class TestStalwartClient(UnitTestCase):
     def test_unsupported_query_filters_are_refused_by_the_fake(self) -> None:
         self.assertRaises(StalwartRejectedError, self.client.roles.find, {"description": "x"})
         self.assertIsNone(self.client.roles.find_by_description("missing"))
+
+    def test_plan_destroy_filters_on_the_server_like_the_cli(self) -> None:
+        self.client.roles.create_id(Role(description="keep"))
+        gone = self.client.roles.create_id(Role(description="gone"))
+
+        result = self.client.apply([{"@type": "destroy", "object": "Role", "value": {"text": "gone"}}])
+        self.assertEqual(result.destroyed, [gone])
+        self.assertEqual([role["description"] for role in self.fake.all("Role")], ["keep"])
+
+        unfilterable = {"@type": "destroy", "object": "MtaHook", "value": {"url": "http://hook.test"}}
+        self.assertRaises(StalwartRejectedError, self.client.apply, [unfilterable])
 
     def test_patches_need_existing_parents(self) -> None:
         domain_id = self.client.domains.create_id(Domain(name="example.com"))
