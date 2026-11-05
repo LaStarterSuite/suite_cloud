@@ -3949,6 +3949,567 @@
    "title": "Offenders",
    "workbook": "stalwart"
   },
+  "stalwart-outbound-accounts": {
+   "chart_type": "Table",
+   "config": {
+    "columns": [],
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 1000,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "Highest Score",
+       "type": "column"
+      },
+      "direction": "desc"
+     }
+    ],
+    "rows": [
+     {
+      "column_name": "account",
+      "data_type": "String",
+      "dimension_name": "account"
+     }
+    ],
+    "values": [
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count()",
+       "type": "expression"
+      },
+      "measure_name": "Messages"
+     },
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "median(score)",
+       "type": "expression"
+      },
+      "measure_name": "Median Score"
+     },
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "max(score)",
+       "type": "expression"
+      },
+      "measure_name": "Highest Score"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count_if(score >= reject_score)",
+       "type": "expression"
+      },
+      "measure_name": "Over Reject Score"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count_if(action == 'reject')",
+       "type": "expression"
+      },
+      "measure_name": "Refused"
+     }
+    ]
+   },
+   "description": null,
+   "folder": null,
+   "info": "Each signed-in sender's scores, highest first. A taken-over account shows as a jump in its highest and median score.",
+   "name": "stalwart-outbound-accounts",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 114,
+   "title": "Outbound Scores by Account",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-message-rules": {
+   "chart_type": "Table",
+   "config": {
+    "columns": [],
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 1000,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "Rule Score",
+       "type": "column"
+      },
+      "direction": "desc"
+     }
+    ],
+    "rows": [
+     {
+      "column_name": "message_id",
+      "data_type": "String",
+      "dimension_name": "message_id"
+     },
+     {
+      "column_name": "symbol",
+      "data_type": "String",
+      "dimension_name": "symbol"
+     }
+    ],
+    "values": [
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "max(score)",
+       "type": "expression"
+      },
+      "measure_name": "Rule Score"
+     },
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "max(message_score)",
+       "type": "expression"
+      },
+      "measure_name": "Message Score"
+     }
+    ]
+   },
+   "description": null,
+   "folder": null,
+   "info": "Every rule that matched each message and what it added. Filter by Message ID to see why one message scored what it did.",
+   "name": "stalwart-outbound-message-rules",
+   "query": "stalwart-outbound-scan-symbols",
+   "sort_order": 116,
+   "title": "Rules per Message",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-messages": {
+   "chart_type": "Table",
+   "config": {
+    "columns": [],
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 1000,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "timestamp",
+       "type": "column"
+      },
+      "direction": "desc"
+     }
+    ],
+    "rows": [
+     {
+      "column_name": "timestamp",
+      "data_type": "Datetime",
+      "dimension_name": "timestamp",
+      "granularity": "minute"
+     },
+     {
+      "column_name": "account",
+      "data_type": "String",
+      "dimension_name": "account"
+     },
+     {
+      "column_name": "envelope_from",
+      "data_type": "String",
+      "dimension_name": "envelope_from"
+     },
+     {
+      "column_name": "header_from",
+      "data_type": "String",
+      "dimension_name": "header_from"
+     },
+     {
+      "column_name": "message_id",
+      "data_type": "String",
+      "dimension_name": "message_id"
+     },
+     {
+      "column_name": "host",
+      "data_type": "String",
+      "dimension_name": "host"
+     },
+     {
+      "column_name": "action",
+      "data_type": "String",
+      "dimension_name": "action"
+     }
+    ],
+    "values": [
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "max(score)",
+       "type": "expression"
+      },
+      "measure_name": "Score"
+     },
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "max(scan_time)",
+       "type": "expression"
+      },
+      "measure_name": "Scan Time (ms)"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "max(recipients)",
+       "type": "expression"
+      },
+      "measure_name": "Recipients"
+     }
+    ]
+   },
+   "description": null,
+   "folder": null,
+   "info": "One row per scanned message, newest first. Put a Message-ID in the Message ID filter to find a test message.",
+   "name": "stalwart-outbound-messages",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 115,
+   "title": "Scanned Messages",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-scan-readings": {
+   "chart_type": "Number",
+   "config": {
+    "date_column": {
+     "column_name": "timestamp",
+     "data_type": "Datetime",
+     "dimension_name": "timestamp"
+    },
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 100,
+    "number_column_options": [
+     {
+      "comparison": {
+       "show": "change",
+       "source": "previous"
+      }
+     },
+     {
+      "comparison": {
+       "show": "change",
+       "source": "previous"
+      },
+      "negative_is_better": true
+     },
+     {
+      "comparison": {
+       "show": "change",
+       "source": "previous"
+      },
+      "negative_is_better": true
+     },
+     {
+      "comparison": {
+       "show": "change",
+       "source": "previous"
+      },
+      "negative_is_better": true
+     }
+    ],
+    "number_columns": [
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count()",
+       "type": "expression"
+      },
+      "measure_name": "Scanned",
+      "id": "Scanned"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count_if(action == 'reject')",
+       "type": "expression"
+      },
+      "measure_name": "Refused",
+      "id": "Refused"
+     },
+     {
+      "data_type": "Integer",
+      "expression": {
+       "expression": "count_if((action != 'reject') & (score >= reject_score))",
+       "type": "expression"
+      },
+      "measure_name": "Over Reject Score, Not Refused",
+      "id": "Over Reject Score, Not Refused"
+     },
+     {
+      "data_type": "Decimal",
+      "expression": {
+       "expression": "median(scan_time)",
+       "type": "expression"
+      },
+      "measure_name": "Median Scan Time (ms)",
+      "id": "Median Scan Time (ms)"
+     }
+    ],
+    "number_formats": {},
+    "sparkline": true,
+    "window": {
+     "grain": "day"
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": null,
+   "name": "stalwart-outbound-scan-readings",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 109,
+   "title": "Outbound Scan Readings",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-scan-results": {
+   "chart_type": "Bar",
+   "config": {
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 100,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "timestamp",
+       "type": "column"
+      },
+      "direction": "asc"
+     }
+    ],
+    "x_axis": {
+     "dimension": {
+      "column_name": "timestamp",
+      "data_type": "Datetime",
+      "dimension_name": "timestamp",
+      "granularity": "day"
+     }
+    },
+    "y_axis": {
+     "series": [
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count_if((action != 'reject') & (score < reject_score))",
+         "type": "expression"
+        },
+        "measure_name": "Passed"
+       }
+      },
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count_if((action != 'reject') & (score >= reject_score))",
+         "type": "expression"
+        },
+        "measure_name": "Over Reject Score, Not Refused"
+       }
+      },
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count_if(action == 'reject')",
+         "type": "expression"
+        },
+        "measure_name": "Refused"
+       }
+      }
+     ],
+     "show_data_labels": false,
+     "stack": true
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": "Messages signed-in senders sent, per day, as each node's Rspamd scored them. Over Reject Score, Not Refused is what Observe let through that Enforce would refuse, at the reject score the settings had when the records arrived.",
+   "name": "stalwart-outbound-scan-results",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 110,
+   "title": "Outbound Scan Results",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-scan-time": {
+   "chart_type": "Line",
+   "config": {
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 1000,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "timestamp",
+       "type": "column"
+      },
+      "direction": "asc"
+     }
+    ],
+    "x_axis": {
+     "dimension": {
+      "column_name": "timestamp",
+      "data_type": "Datetime",
+      "dimension_name": "timestamp",
+      "granularity": "hour"
+     }
+    },
+    "y_axis": {
+     "series": [
+      {
+       "measure": {
+        "data_type": "Decimal",
+        "expression": {
+         "expression": "median(scan_time)",
+         "type": "expression"
+        },
+        "measure_name": "Median"
+       }
+      },
+      {
+       "measure": {
+        "data_type": "Decimal",
+        "expression": {
+         "expression": "max(scan_time)",
+         "type": "expression"
+        },
+        "measure_name": "Slowest"
+       }
+      }
+     ],
+     "show_data_labels": false,
+     "show_data_points": true
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": "Milliseconds Rspamd took per message, per hour: the delay the scan adds to each send. Stalwart sends unscanned past 6000 ms.",
+   "name": "stalwart-outbound-scan-time",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 113,
+   "title": "Outbound Scan Time (ms)",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-score-bands": {
+   "chart_type": "Bar",
+   "config": {
+    "filters": {
+     "filters": [],
+     "logical_operator": "And"
+    },
+    "limit": 100,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "score_band",
+       "type": "column"
+      },
+      "direction": "asc"
+     }
+    ],
+    "x_axis": {
+     "dimension": {
+      "column_name": "score_band",
+      "data_type": "String",
+      "dimension_name": "score_band"
+     }
+    },
+    "y_axis": {
+     "series": [
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count()",
+         "type": "expression"
+        },
+        "measure_name": "Messages"
+       }
+      }
+     ],
+     "show_data_labels": true
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": "How many messages got each Rspamd score, in bands of one point. Use it to set the reject score: clean mail should sit well below it.",
+   "name": "stalwart-outbound-score-bands",
+   "query": "stalwart-outbound-scans",
+   "sort_order": 111,
+   "title": "Outbound Scores",
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-top-rules": {
+   "chart_type": "Row",
+   "config": {
+    "filters": {
+     "filters": [
+      {
+       "column": {
+        "column_name": "score",
+        "type": "column"
+       },
+       "operator": ">",
+       "value": 0
+      }
+     ],
+     "logical_operator": "And"
+    },
+    "limit": 15,
+    "order_by": [
+     {
+      "column": {
+       "column_name": "Messages",
+       "type": "column"
+      },
+      "direction": "desc"
+     }
+    ],
+    "x_axis": {
+     "dimension": {
+      "column_name": "symbol",
+      "data_type": "String",
+      "dimension_name": "symbol"
+     }
+    },
+    "y_axis": {
+     "series": [
+      {
+       "measure": {
+        "data_type": "Integer",
+        "expression": {
+         "expression": "count()",
+         "type": "expression"
+        },
+        "measure_name": "Messages"
+       }
+      }
+     ],
+     "show_data_labels": true
+    }
+   },
+   "description": null,
+   "folder": null,
+   "info": "The Rspamd rules that added to a message's score most often. Filter by account to see what one sender trips.",
+   "name": "stalwart-outbound-top-rules",
+   "query": "stalwart-outbound-scan-symbols",
+   "sort_order": 112,
+   "title": "Rules That Raised Scores",
+   "workbook": "stalwart"
+  },
   "stalwart-outcomes": {
    "chart_type": "Bar",
    "config": {
@@ -8165,6 +8726,241 @@
    ],
    "workbook": "stalwart"
   },
+  "stalwart-outbound-scan": {
+   "items": [
+    {
+     "default_operator": "within",
+     "filter_name": "Date Range",
+     "filter_type": "Date",
+     "icon": "calendar",
+     "layout": {
+      "h": 2,
+      "i": "filter-date",
+      "w": 4,
+      "x": 0,
+      "y": 0
+     },
+     "links": {
+      "stalwart-outbound-scan-readings": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-scan-results": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-score-bands": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-top-rules": "`stalwart-outbound-scan-symbols`.`timestamp`",
+      "stalwart-outbound-scan-time": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-accounts": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-messages": "`stalwart-outbound-scans`.`timestamp`",
+      "stalwart-outbound-message-rules": "`stalwart-outbound-scan-symbols`.`timestamp`"
+     },
+     "type": "filter",
+     "default_value": "Last 7 Day (include current)"
+    },
+    {
+     "default_operator": "in",
+     "filter_name": "Host",
+     "filter_type": "String",
+     "icon": "server",
+     "layout": {
+      "h": 2,
+      "i": "filter-host",
+      "w": 4,
+      "x": 4,
+      "y": 0
+     },
+     "links": {
+      "stalwart-outbound-scan-readings": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-scan-results": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-score-bands": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-top-rules": "`stalwart-outbound-scan-symbols`.`host`",
+      "stalwart-outbound-scan-time": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-accounts": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-messages": "`stalwart-outbound-scans`.`host`",
+      "stalwart-outbound-message-rules": "`stalwart-outbound-scan-symbols`.`host`"
+     },
+     "type": "filter"
+    },
+    {
+     "default_operator": "in",
+     "filter_name": "Account",
+     "filter_type": "String",
+     "icon": "filter",
+     "layout": {
+      "h": 2,
+      "i": "filter-account",
+      "w": 4,
+      "x": 8,
+      "y": 0
+     },
+     "links": {
+      "stalwart-outbound-scan-readings": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-scan-results": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-score-bands": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-top-rules": "`stalwart-outbound-scan-symbols`.`account`",
+      "stalwart-outbound-scan-time": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-accounts": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-messages": "`stalwart-outbound-scans`.`account`",
+      "stalwart-outbound-message-rules": "`stalwart-outbound-scan-symbols`.`account`"
+     },
+     "type": "filter"
+    },
+    {
+     "default_operator": "contains",
+     "filter_name": "Message ID",
+     "filter_type": "String",
+     "icon": "search",
+     "layout": {
+      "h": 2,
+      "i": "filter-message_id",
+      "w": 4,
+      "x": 12,
+      "y": 0
+     },
+     "links": {
+      "stalwart-outbound-scan-readings": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-scan-results": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-score-bands": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-top-rules": "`stalwart-outbound-scan-symbols`.`message_id`",
+      "stalwart-outbound-scan-time": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-accounts": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-messages": "`stalwart-outbound-scans`.`message_id`",
+      "stalwart-outbound-message-rules": "`stalwart-outbound-scan-symbols`.`message_id`"
+     },
+     "type": "filter"
+    },
+    {
+     "chart": "stalwart-outbound-scan-readings",
+     "layout": {
+      "h": 7,
+      "i": "scan_readings-0",
+      "w": 5,
+      "x": 0,
+      "y": 2
+     },
+     "type": "chart",
+     "reading": "Scanned"
+    },
+    {
+     "chart": "stalwart-outbound-scan-readings",
+     "layout": {
+      "h": 7,
+      "i": "scan_readings-1",
+      "w": 5,
+      "x": 5,
+      "y": 2
+     },
+     "type": "chart",
+     "reading": "Refused"
+    },
+    {
+     "chart": "stalwart-outbound-scan-readings",
+     "layout": {
+      "h": 7,
+      "i": "scan_readings-2",
+      "w": 5,
+      "x": 10,
+      "y": 2
+     },
+     "type": "chart",
+     "reading": "Over Reject Score, Not Refused"
+    },
+    {
+     "chart": "stalwart-outbound-scan-readings",
+     "layout": {
+      "h": 7,
+      "i": "scan_readings-3",
+      "w": 5,
+      "x": 15,
+      "y": 2
+     },
+     "type": "chart",
+     "reading": "Median Scan Time (ms)"
+    },
+    {
+     "chart": "stalwart-outbound-scan-results",
+     "layout": {
+      "h": 20,
+      "i": "scan_results",
+      "w": 10,
+      "x": 0,
+      "y": 9
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-score-bands",
+     "layout": {
+      "h": 20,
+      "i": "score_bands",
+      "w": 10,
+      "x": 10,
+      "y": 9
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-top-rules",
+     "layout": {
+      "h": 20,
+      "i": "top_rules",
+      "w": 10,
+      "x": 0,
+      "y": 29
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-scan-time",
+     "layout": {
+      "h": 20,
+      "i": "scan_time",
+      "w": 10,
+      "x": 10,
+      "y": 29
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-accounts",
+     "layout": {
+      "h": 20,
+      "i": "accounts",
+      "w": 20,
+      "x": 0,
+      "y": 49
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-messages",
+     "layout": {
+      "h": 24,
+      "i": "messages",
+      "w": 20,
+      "x": 0,
+      "y": 69
+     },
+     "type": "chart"
+    },
+    {
+     "chart": "stalwart-outbound-message-rules",
+     "layout": {
+      "h": 20,
+      "i": "message_rules",
+      "w": 20,
+      "x": 0,
+      "y": 93
+     },
+     "type": "chart"
+    }
+   ],
+   "name": "stalwart-outbound-scan",
+   "title": "Outbound Spam Scan",
+   "vertical_compact_layout": 1,
+   "visible_to_roles": [
+    {
+     "role": "Desk User"
+    }
+   ],
+   "workbook": "stalwart"
+  },
   "stalwart-overview": {
    "items": [
     {
@@ -9451,7 +10247,7 @@
  "folders": [],
  "idx": 0,
  "is_standard": 1,
- "modified": "2026-11-04 01:35:00.000000",
+ "modified": "2026-11-05 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
  "name": "stalwart",
@@ -10104,6 +10900,115 @@
    ],
    "sort_order": 4,
    "title": "Metrics by Cluster",
+   "use_live_connection": 1,
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-scan-symbols": {
+   "folder": null,
+   "is_builder_query": 1,
+   "is_native_query": 0,
+   "is_script_query": 0,
+   "name": "stalwart-outbound-scan-symbols",
+   "operations": [
+    {
+     "table": {
+      "data_source": "suite_cloud_telemetry",
+      "table_name": "outbound_scan_symbols",
+      "type": "table"
+     },
+     "type": "source"
+    },
+    {
+     "data_type": "String",
+     "expression": {
+      "expression": "coalesce(hostname, host_ip)",
+      "type": "expression"
+     },
+     "new_name": "host",
+     "type": "mutate"
+    },
+    {
+     "column_names": [
+      "timestamp",
+      "host",
+      "hostname",
+      "host_ip",
+      "account",
+      "message_id",
+      "action",
+      "message_score",
+      "symbol",
+      "score"
+     ],
+     "type": "select"
+    }
+   ],
+   "sort_order": 14,
+   "title": "Outbound Scan Rules",
+   "use_live_connection": 1,
+   "workbook": "stalwart"
+  },
+  "stalwart-outbound-scans": {
+   "folder": null,
+   "is_builder_query": 1,
+   "is_native_query": 0,
+   "is_script_query": 0,
+   "name": "stalwart-outbound-scans",
+   "operations": [
+    {
+     "table": {
+      "data_source": "suite_cloud_telemetry",
+      "table_name": "outbound_scans",
+      "type": "table"
+     },
+     "type": "source"
+    },
+    {
+     "data_type": "String",
+     "expression": {
+      "expression": "coalesce(hostname, host_ip)",
+      "type": "expression"
+     },
+     "new_name": "host",
+     "type": "mutate"
+    },
+    {
+     "data_type": "String",
+     "expression": {
+      "expression": "if_else(score < 0, '-∞ to 00', if_else(score >= 20, '20 to ∞', concat(pad_number(floor(score), 2), ' to ', pad_number(floor(score) + 1, 2))))",
+      "type": "expression"
+     },
+     "new_name": "score_band",
+     "type": "mutate"
+    },
+    {
+     "column_names": [
+      "timestamp",
+      "host",
+      "hostname",
+      "host_ip",
+      "account",
+      "account_domain",
+      "envelope_from",
+      "header_from",
+      "message_id",
+      "queue_id",
+      "client_ip",
+      "recipients",
+      "size",
+      "action",
+      "score",
+      "score_band",
+      "scan_time",
+      "mode",
+      "reject_score",
+      "symbols"
+     ],
+     "type": "select"
+    }
+   ],
+   "sort_order": 13,
+   "title": "Outbound Scans",
    "use_live_connection": 1,
    "workbook": "stalwart"
   },

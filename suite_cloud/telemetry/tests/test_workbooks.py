@@ -3,7 +3,7 @@ import re
 import unittest
 from pathlib import Path
 
-from suite_cloud.telemetry import EVENT_DATA_COLUMNS, METRIC_NAMES
+from suite_cloud.telemetry import EVENT_DATA_COLUMNS, METRIC_NAMES, OUTBOUND_SCAN_SYMBOLS, OUTBOUND_SCANS
 
 WORKBOOKS = Path(__file__).resolve().parents[1] / "insights_workbook"
 MAIL_DOCTYPES = Path(__file__).resolve().parents[2] / "mail" / "doctype"
@@ -111,6 +111,32 @@ class TestShippedWorkbooks(unittest.TestCase):
     def test_the_sending_usage_filters_reach_every_chart(self) -> None:
         workbook = shipped_workbook("stalwart")
         dashboard = workbook["dashboards"]["stalwart-sending-usage"]
+        charts = {item["chart"] for item in dashboard["items"] if item["type"] == "chart"}
+        self.assertTrue(charts <= set(workbook["charts"]))
+        for item in dashboard["items"]:
+            if item["type"] == "filter":
+                with self.subTest(filter=item["filter_name"]):
+                    self.assertEqual(set(item["links"]), charts)
+
+    def test_the_outbound_scan_queries_read_columns_the_tables_have(self) -> None:
+        queries = shipped_workbook("stalwart")["queries"]
+        for name, table in (
+            ("stalwart-outbound-scans", OUTBOUND_SCANS),
+            ("stalwart-outbound-scan-symbols", OUTBOUND_SCAN_SYMBOLS),
+        ):
+            operations = queries[name]["operations"]
+            mutated = {operation["new_name"] for operation in operations if operation["type"] == "mutate"}
+            selected = next(operation for operation in operations if operation["type"] == "select")
+            with self.subTest(query=name):
+                self.assertEqual(operations[0]["table"]["table_name"], table.name)
+                self.assertLessEqual(
+                    set(selected["column_names"]),
+                    {*table.columns, *(column.name for column in table.derived), *mutated},
+                )
+
+    def test_the_outbound_scan_filters_reach_every_chart(self) -> None:
+        workbook = shipped_workbook("stalwart")
+        dashboard = workbook["dashboards"]["stalwart-outbound-scan"]
         charts = {item["chart"] for item in dashboard["items"] if item["type"] == "chart"}
         self.assertTrue(charts <= set(workbook["charts"]))
         for item in dashboard["items"]:
