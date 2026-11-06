@@ -32,6 +32,8 @@
   "column_break_stores",
   "search_store",
   "in_memory_store",
+  "outbound_scan_section",
+  "outbound_scan_store",
   "derived_section",
   "coordinator",
   "column_break_derived",
@@ -162,7 +164,7 @@
    "set_only_once": 1
   },
   {
-   "description": "The hostname, as Stalwart's default domain. Nodes, gateways and pools are named under it, e.g. n1.mail.bom.frappemail.com.",
+   "description": "Stalwart's default domain, the same as the hostname. Nodes, gateways and pools are named under it, e.g. n1.mail.bom.frappemail.com.",
    "fieldname": "default_domain",
    "fieldtype": "Data",
    "label": "Default Domain",
@@ -220,7 +222,7 @@
    "fieldname": "data_store",
    "fieldtype": "Link",
    "label": "Data Store",
-   "options": "Stalwart Store",
+   "options": "Mail Store",
    "reqd": 1
   },
   {
@@ -228,7 +230,7 @@
    "fieldname": "blob_store",
    "fieldtype": "Link",
    "label": "Blob Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
   },
   {
    "fieldname": "column_break_stores",
@@ -239,21 +241,33 @@
    "fieldname": "search_store",
    "fieldtype": "Link",
    "label": "Search Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
   },
   {
    "description": "Caches, rate limits and coordination. Blank uses the data store. More than one node needs Redis.",
    "fieldname": "in_memory_store",
    "fieldtype": "Link",
    "label": "In-Memory Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
+  },
+  {
+   "fieldname": "outbound_scan_section",
+   "fieldtype": "Section Break",
+   "label": "Outbound Scan"
+  },
+  {
+   "description": "Redis that the nodes' spam scanners share for fuzzy hashes and history. Blank runs them without Redis.",
+   "fieldname": "outbound_scan_store",
+   "fieldtype": "Link",
+   "label": "Outbound Scan Store",
+   "options": "Mail Store"
   },
   {
    "fieldname": "derived_section",
    "fieldtype": "Section Break"
   },
   {
-   "description": "Set automatically. Default when a multi-node cluster has a Redis store.",
+   "description": "Set automatically: Default for a multi-node cluster with a Redis store, else Disabled.",
    "fieldname": "coordinator",
    "fieldtype": "Select",
    "label": "Coordinator",
@@ -389,7 +403,7 @@
   },
   {
    "default": "2000",
-   "description": "Ceiling for every account's Daily Send Limit and every tenant's default, in recipients per UTC day. Also the server's own cap per account while Suite Cloud does not answer.",
+   "description": "Upper limit, in recipients per UTC day, for each account's Daily Send Limit and each tenant default. Stalwart also applies it when Suite Cloud does not answer.",
    "fieldname": "max_daily_send_limit",
    "fieldtype": "Int",
    "label": "Max Daily Send Limit",
@@ -398,7 +412,7 @@
   },
   {
    "default": "10000",
-   "description": "Ceiling for every account's Monthly Send Limit and every tenant's default, in recipients per UTC month.",
+   "description": "Upper limit, in recipients per UTC month, for each account's Monthly Send Limit and each tenant default.",
    "fieldname": "max_monthly_send_limit",
    "fieldtype": "Int",
    "label": "Max Monthly Send Limit",
@@ -511,7 +525,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

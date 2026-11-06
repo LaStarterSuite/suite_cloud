@@ -126,7 +126,7 @@
    "label": "Network"
   },
   {
-   "description": "Public IPv4 of the server, used for SSH and management. Changing it requires a new SSH check.",
+   "description": "Public IPv4 of the server, used for SSH and management. A change needs a new SSH check.",
    "fieldname": "ipv4_address",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -194,7 +194,7 @@
    "fieldname": "data_store",
    "fieldtype": "Link",
    "label": "Data Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
   },
   {
    "default": "admin",
@@ -249,7 +249,7 @@
   },
   {
    "default": "0",
-   "description": "Set once a job wrote the token to stalwart.env and restarted Stalwart.",
+   "description": "Set after a job writes the token to stalwart.env and restarts Stalwart.",
    "fieldname": "suite_cloud_token_installed",
    "fieldtype": "Check",
    "label": "Suite Cloud Token Installed",
@@ -316,7 +316,7 @@
    "link_fieldname": "managed_by"
   }
  ],
- "modified": "2026-11-04 12:00:00.000000",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Egress Gateway",

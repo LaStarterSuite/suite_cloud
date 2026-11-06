@@ -20,19 +20,19 @@
  ],
  "fields": [
   {
-   "description": "Silent Host: the node stopped reporting. Error Rate: too many error events in the last hour.",
+   "description": "Metrics Silent: no metrics pushed. Outbound Scan Silent: the scan shipper stopped checking in. Error Rate: too many error events in the last hour.",
    "fieldname": "alert_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Alert Type",
-   "options": "Silent Host\nError Rate",
+   "options": "Metrics Silent\nOutbound Scan Silent\nError Rate",
    "read_only": 1,
    "reqd": 1
   },
   {
    "default": "Open",
-   "description": "Resolved when the condition clears. Resolve a Silent Host alert by hand if the node was removed.",
+   "description": "Resolved when the condition clears. Resolve a silence alert by hand if the server was removed.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -92,7 +92,7 @@
   },
   {
    "default": "0",
-   "description": "Resolved by hand. No new Silent Host alert until the node reports again.",
+   "description": "Resolved by hand. No new alert of this type until the server reports again.",
    "fieldname": "dismissed",
    "fieldtype": "Check",
    "label": "Dismissed",
@@ -113,10 +113,10 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Telemetry",
- "name": "Telemetry Alert",
+ "name": "Server Alert",
  "owner": "Administrator",
  "permissions": [
   {

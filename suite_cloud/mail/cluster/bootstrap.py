@@ -7,7 +7,7 @@ import frappe
 from frappe import _
 from frappe.utils import add_to_date, get_datetime, now
 
-from suite_cloud.mail.cluster import dns, plan, server_token
+from suite_cloud.mail.cluster import dns, plan, rspamd, server_token
 from suite_cloud.mail.stalwart import forget_sessions, get_client, has_credentials
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.mail.stalwart.errors import StalwartError, StalwartUnauthorizedError
@@ -158,7 +158,26 @@ def build_node_variables(context: dict) -> dict:
         ],
     }
     variables.update(token_variables(context))
+    variables.update(rspamd_variables(cluster))
+    if redis_secrets := rspamd.get_redis_secrets(cluster):
+        variables["__secret_keys__"].append("rspamd_files")
+        variables["__secret_values__"].extend(redis_secrets)
     return variables
+
+
+def rspamd_variables(cluster: Document) -> dict:
+    """What install-rspamd.yml needs. An Egress Gateway's variables lack ``install_rspamd``: it
+    relays mail the node scanned already."""
+
+    files = rspamd.get_rspamd_files(cluster)
+    return {
+        "install_rspamd": True,
+        "rspamd_version": get_config("rspamd_version") or "",
+        "rspamd_files": files,
+        "rspamd_private_files": list(rspamd.PRIVATE_FILES),
+        "rspamd_digest": rspamd.get_files_digest(files),
+        "rspamd_cpu_placeholder": rspamd.CPU_COUNT_PLACEHOLDER,
+    }
 
 
 # --- callbacks --------------------------------------------------------------------------------
@@ -171,6 +190,7 @@ def after_provision(node: Document, job: Document) -> None:
     if node.is_bootstrap_node and cluster.status == "Failed" and cluster.bootstrap_node == node.name:
         cluster.db_set("status", "Bootstrapping", update_modified=False)  # a retried bootstrap succeeded
     mark_token_installed(node)  # while the node is not running yet, so the push follows no change
+    rspamd.mark_scanner_installed(node, job)
     node.db_set(
         {
             "status": "Provisioned",
@@ -196,6 +216,7 @@ def after_upgrade(node: Document, job: Document) -> None:
     node.set_status("Provisioned")
     check_node(node)
     mark_token_installed(node)  # the upgrade wrote stalwart.env
+    rspamd.mark_scanner_installed(node, job)  # and the Rspamd files
 
 
 # --- health ------------------------------------------------------------------------------------

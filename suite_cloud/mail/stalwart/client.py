@@ -94,6 +94,12 @@ class StalwartClient:
 
         self.actions.run("ReloadSettings")
 
+    def reload_lookup_stores(self) -> None:
+        """Memory Lookup Keys apply only after this; ReloadSettings leaves the lookup stores. It
+        reaches the cluster's other nodes too."""
+
+        self.actions.run("ReloadLookupStores")
+
     def apply(self, plan: list[dict]) -> ApplyResult:
         return PlanApplier(self).apply(plan)
 

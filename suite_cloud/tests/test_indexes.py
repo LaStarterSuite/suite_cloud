@@ -12,7 +12,7 @@ COMPOSITE_INDEXES = {
     "Mailing List Recipient": [("email",), ("tenant", "mailing_list", "email")],
     "Suite Site": [("region", "status"), ("status",)],
     "Suite Tenant Request": [("status",), ("tenant",)],
-    "Telemetry Alert": [("host_ip", "alert_type"), ("status",)],
+    "Server Alert": [("host_ip", "alert_type"), ("status",)],
     "Tenant Email": [("tenant", "sent_at")],
 }
 

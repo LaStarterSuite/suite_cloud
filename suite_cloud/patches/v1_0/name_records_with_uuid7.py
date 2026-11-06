@@ -4,7 +4,13 @@ import frappe
 
 from suite_cloud.patches.v1_0.tenant_id_and_secret import is_uuid
 
-DOCTYPES = ("DNS Record", "Mailing List Recipient", "Server Job", "Stalwart Store", "Telemetry Alert")
+DOCTYPES = (
+    "DNS Record",
+    "Mailing List Recipient",
+    "Server Job",
+    "Mail Store",
+    "Server Alert",
+)  # renamed before this runs
 
 
 def execute() -> None:

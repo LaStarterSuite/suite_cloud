@@ -1,0 +1,114 @@
+---
+# The outbound spam scanner: Rspamd in milter mode on 127.0.0.1:11332, which Stalwart calls at DATA
+# for signed-in senders. Only Stalwart Nodes set install_rspamd; an Egress Gateway skips this play.
+- name: Install Rspamd
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    # Read after every other file and before local.d, so a hand-made one replaces whole sections.
+    rspamd_top_level_overrides:
+      - /etc/rspamd/rspamd.conf.local
+      - /etc/rspamd/rspamd.conf.local.override
+      - /etc/rspamd/rspamd.conf.override
+  tasks:
+    - name: Install and configure Rspamd
+      when: install_rspamd | default(false) | bool
+      block:
+        # The Ubuntu package is old and unsupported upstream, so the upstream stable repository.
+        - name: Create the APT keyring directory
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: Add the Rspamd signing key
+          get_url:
+            url: https://rspamd.com/apt-stable/gpg.key
+            dest: /etc/apt/keyrings/rspamd.asc
+            mode: "0644"
+
+        - name: Add the Rspamd repository
+          apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/rspamd.asc] http://rspamd.com/apt-stable/ {{ ansible_distribution_release }} main"
+            filename: rspamd
+            state: present
+
+        - name: Install Rspamd
+          apt:
+            name: "{{ 'rspamd=' ~ rspamd_version ~ '*' if rspamd_version else 'rspamd' }}"
+            state: present
+            update_cache: true
+
+        - name: Create the configuration directories
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: "0755"
+          loop: "{{ rspamd_files.keys() | map('dirname') | unique | list }}"
+
+        # Suite Cloud owns the node's Rspamd configuration. A file it does not write, such as a
+        # hand-made actions.conf or rspamd.conf.override, would change what the scanner refuses.
+        - name: Find the Rspamd files Suite Cloud does not write
+          find:
+            paths:
+              - /etc/rspamd/local.d
+              - /etc/rspamd/override.d
+            file_type: any
+            excludes: "*.example"
+          register: rspamd_local_files
+
+        - name: Remove the Rspamd files Suite Cloud does not write
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop: "{{ rspamd_local_files.files | map(attribute='path') | list | union(rspamd_top_level_overrides) | difference(rspamd_files.keys() | list) }}"
+          register: rspamd_removed_files
+
+        # A file with the Redis password is readable by Rspamd's group only.
+        - name: Write the Rspamd configuration
+          copy:
+            content: "{{ item.value | replace(rspamd_cpu_placeholder, ansible_processor_vcpus | string) }}"
+            dest: "{{ item.key }}"
+            owner: root
+            group: "{{ '_rspamd' if item.key in rspamd_private_files else 'root' }}"
+            mode: "{{ '0640' if item.key in rspamd_private_files else '0644' }}"
+          loop: "{{ rspamd_files | dict2items }}"
+          loop_control:
+            label: "{{ item.key }}"
+          register: rspamd_config_files
+
+        - name: Check the Rspamd configuration
+          command: rspamadm configtest
+          changed_when: false
+
+        - name: Start Rspamd
+          systemd:
+            name: rspamd
+            state: started
+            enabled: true
+          register: rspamd_start
+
+        - name: Reload Rspamd with the new configuration
+          when: (rspamd_config_files is changed or rspamd_removed_files is changed) and rspamd_start is not changed
+          systemd:
+            name: rspamd
+            state: reloaded
+
+        - name: Wait for the milter port
+          wait_for:
+            host: 127.0.0.1
+            port: 11332
+            timeout: 60
+
+        # Sends the records rspamd.local.lua writes to Suite Cloud each minute.
+        - name: Reload systemd with the scan shipper
+          when: rspamd_config_files is changed
+          systemd:
+            daemon_reload: true
+
+        - name: Start the scan shipper timer
+          systemd:
+            name: suite-cloud-scans.timer
+            state: started
+            enabled: true

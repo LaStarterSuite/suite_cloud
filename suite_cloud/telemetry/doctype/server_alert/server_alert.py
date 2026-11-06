@@ -1,7 +1,8 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-"""One condition the alert checker (``suite_cloud.telemetry.alerts``) found on a node."""
+"""One condition the alert checker (``suite_cloud.telemetry.alerts``) found on a server: its metrics
+or its outbound scan shipper went silent, or it logs too many errors."""
 
 from uuid import uuid7
 
@@ -10,7 +11,7 @@ from frappe.model.document import Document
 from frappe.utils import now_datetime
 
 
-class TelemetryAlert(Document):
+class ServerAlert(Document):
     # begin: auto-generated types
     # This code is auto-generated. Do not modify anything in this block.
 
@@ -19,7 +20,7 @@ class TelemetryAlert(Document):
     if TYPE_CHECKING:
         from frappe.types import DF
 
-        alert_type: DF.Literal["Silent Host", "Error Rate"]
+        alert_type: DF.Literal["Metrics Silent", "Outbound Scan Silent", "Error Rate"]
         details: DF.SmallText | None
         dismissed: DF.Check
         host_ip: DF.Data
@@ -35,7 +36,7 @@ class TelemetryAlert(Document):
 
     def validate(self) -> None:
         """Resolved by anyone but the checker is a dismissal, which the checker honors until the
-        node reports again."""
+        server reports again."""
 
         self.title = f"{self.alert_type}: {self.hostname or self.host_ip}"
         if self.status == "Open":
@@ -49,4 +50,4 @@ class TelemetryAlert(Document):
 def on_doctype_update() -> None:
     """A dismissed alert is looked up by host and type."""
 
-    frappe.db.add_index("Telemetry Alert", ["host_ip", "alert_type"])
+    frappe.db.add_index("Server Alert", ["host_ip", "alert_type"])

@@ -73,7 +73,7 @@
   },
   {
    "default": "1",
-   "description": "Clear to stop sending and receiving. The domain must be verified again after it is enabled.",
+   "description": "Clear to stop sending and receiving. After you enable it again, the domain needs a new verification.",
    "fieldname": "enabled",
    "fieldtype": "Check",
    "label": "Enabled"
@@ -304,7 +304,7 @@
    "link_fieldname": "policy_domain"
   }
  ],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Mail Domain",

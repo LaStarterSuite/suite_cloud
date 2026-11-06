@@ -8,8 +8,8 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, flt
 
-# Which Stalwart backend variants may back each store kind. Embedded backends (RocksDb,
-# FileSystem) only work for a single node; the cluster validates that.
+# Which backend variants, as Stalwart names them, may back each store kind. Embedded backends
+# (RocksDb, FileSystem) only work for a single node; the cluster validates that.
 KIND_TYPES = {
     "Data": ("PostgreSql", "MySql", "RocksDb"),
     "Blob": ("Default", "S3", "FileSystem", "PostgreSql", "MySql"),
@@ -17,7 +17,8 @@ KIND_TYPES = {
     "In-Memory": ("Default", "Redis", "RedisCluster", "RedisSentinel"),
 }
 EMBEDDED_TYPES = ("RocksDb", "FileSystem")
-STORE_FIELDS = ("data_store", "blob_store", "search_store", "in_memory_store")
+# The cluster fields that link a store: Stalwart's four and the outbound scanner's.
+STORE_FIELDS = ("data_store", "blob_store", "search_store", "in_memory_store", "outbound_scan_store")
 # The AWS regions Stalwart names (S3StoreRegion) and so knows the endpoint of.
 S3_REGIONS = (
     "us-east-1",
@@ -47,7 +48,7 @@ S3_REGIONS = (
 )
 
 
-class StalwartStore(Document):
+class MailStore(Document):
     # begin: auto-generated types
     # This code is auto-generated. Do not modify anything in this block.
 
@@ -153,9 +154,9 @@ class StalwartStore(Document):
     def on_trash(self) -> None:
         for field in STORE_FIELDS:
             if cluster := frappe.db.exists("Stalwart Cluster", {field: self.name}):
-                frappe.throw(_("Stalwart Store is used by cluster {0}.").format(cluster))
+                frappe.throw(_("Mail Store is used by cluster {0}.").format(cluster))
         if frappe.db.exists("Egress Gateway", {"data_store": self.name}):
-            frappe.throw(_("Stalwart Store is used by an egress gateway."))
+            frappe.throw(_("Mail Store is used by an egress gateway."))
 
     @property
     def config(self) -> dict:

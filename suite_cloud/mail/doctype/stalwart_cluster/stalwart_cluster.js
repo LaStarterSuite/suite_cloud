@@ -18,6 +18,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 		for (const [field, kind] of Object.entries(kinds)) {
 			frm.set_query(field, () => ({ filters: { kind } }))
 		}
+		frm.set_query('outbound_scan_store', () => ({ filters: { kind: 'In-Memory', type: 'Redis' } }))
 		frm.set_query('default_egress_pool', () => ({ filters: { cluster: frm.doc.name } }))
 	},
 
@@ -34,6 +35,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 			frm.add_custom_button(__('Replace DKIM Keys'), () => frm.trigger('replace_dkim_keys'), __('Access'))
 			frm.add_custom_button(__('Upgrade Nodes'), () => frm.trigger('upgrade_nodes'), __('Nodes'))
 			frm.add_custom_button(__('Install Suite Cloud Tokens'), () => frm.trigger('install_suite_cloud_tokens'), __('Nodes'))
+			frm.add_custom_button(__('Install Outbound Scanners'), () => frm.trigger('install_outbound_scanners'), __('Nodes'))
 		}
 		if (frm.doc.status === 'Bootstrapping') {
 			frm.add_custom_button(__('Finish Bootstrap'), () => frm.trigger('finish_bootstrap'), __('Nodes'))
@@ -61,10 +63,18 @@ frappe.ui.form.on('Stalwart Cluster', {
 		}
 		if (frm.doc.status === 'Active') {
 			frappe.xcall('suite_cloud.telemetry.status.get_cluster_summary', { cluster: frm.doc.name }).then((summary) => {
-				if (!summary.message) return
-				const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
-				frm.dashboard.add_comment(frappe.utils.escape_html(summary.message), colors[summary.state], true)
+				for (const item of summary.indicators) frm.dashboard.add_indicator(frappe.utils.escape_html(item.text), item.color)
 			})
+		}
+		const outdated = (frm.doc.__onload || {}).outdated_scanner_nodes || []
+		if (outdated.length) {
+			frm.dashboard.add_comment(
+				__('The outbound scanner of {0} does not have the current settings. Run Install Outbound Scanners.', [
+					outdated.map((node) => frappe.utils.escape_html(node)).join(', '),
+				]),
+				'orange',
+				true,
+			)
 		}
 		if (frm.doc.last_config_sync_error) {
 			frm.dashboard.add_comment(
@@ -159,6 +169,12 @@ frappe.ui.form.on('Stalwart Cluster', {
 	install_suite_cloud_tokens(frm) {
 		frappe.confirm(__('Install the Suite Cloud token on every active or draining node and every active gateway? Stalwart restarts on a server whose token changed. Once all of them have it, the config is pushed, and Stalwart restarts on every server to start the metrics push while telemetry is on.'), () => {
 			frm.events.call(frm, 'install_suite_cloud_tokens', {}, __('Queueing token installs...'))
+		})
+	},
+
+	install_outbound_scanners(frm) {
+		frappe.confirm(__('Install Rspamd, the outbound spam scanner, with the current settings on every running node? Once all of them have it, the config is pushed and the scan starts.'), () => {
+			frm.events.call(frm, 'install_outbound_scanners', {}, __('Queueing scanner installs...'))
 		})
 	},
 

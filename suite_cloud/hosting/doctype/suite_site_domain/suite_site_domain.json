@@ -92,7 +92,7 @@
    "collapsible_depends_on": "eval:!doc.managed && doc.status != \"Active\""
   },
   {
-   "description": "Fetched again after 23 hours because the verification token expires after 24.",
+   "description": "Fetched again after 23 hours, because the verification token expires after 24 hours.",
    "fieldname": "records_fetched_at",
    "fieldtype": "Datetime",
    "label": "Records Fetched At",
@@ -109,7 +109,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2026-10-28 18:22:33.441427",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Hosting",
  "name": "Suite Site Domain",

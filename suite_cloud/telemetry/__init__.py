@@ -41,6 +41,11 @@ EVENT_LEVELS = {
             "delivery.start-tls-unavailable",
             "message-ingest.ham",
             "message-ingest.spam",
+            "milter.action-accept",
+            "milter.action-discard",
+            "milter.action-reject",
+            "milter.action-reply-code",
+            "milter.action-temp-fail",
             "mta-sts.invalid-policy",
             "mta-sts.not-authorized",
             "mta-sts.policy-fetch-error",
@@ -373,7 +378,53 @@ METRICS = TelemetryTable(
     deltas=METRIC_DELTA_COLUMNS,
 )
 
-TABLES = (EVENTS, METRICS)
+# One row per message a signed-in sender sent, as the node's Rspamd scored it. ``mode`` and
+# ``reject_score`` are Suite Cloud's settings when the batch arrived, so Observe shows what Enforce
+# would have refused.
+OUTBOUND_SCANS = TelemetryTable(
+    "outbound_scans",
+    pyarrow.schema(
+        [
+            *ENVELOPE_FIELDS,
+            pyarrow.field("timestamp", pyarrow.timestamp("us"), nullable=False),
+            pyarrow.field("account", pyarrow.string(), nullable=False),
+            pyarrow.field("envelope_from", pyarrow.string()),
+            pyarrow.field("header_from", pyarrow.string()),
+            pyarrow.field("message_id", pyarrow.string()),
+            pyarrow.field("queue_id", pyarrow.string()),
+            pyarrow.field("client_ip", pyarrow.string()),
+            pyarrow.field("recipients", pyarrow.int64()),
+            pyarrow.field("size", pyarrow.int64()),
+            pyarrow.field("action", pyarrow.string(), nullable=False),
+            pyarrow.field("score", pyarrow.float64(), nullable=False),
+            pyarrow.field("scan_time", pyarrow.float64()),
+            pyarrow.field("mode", pyarrow.string()),
+            pyarrow.field("reject_score", pyarrow.float64()),
+            pyarrow.field("symbols", pyarrow.string()),
+        ]
+    ),
+    (DerivedColumn("account_domain", "VARCHAR", f"regexp_extract(account, {EMAIL_DOMAIN}, 1)"),),
+)
+
+# One row per Rspamd rule that matched a scanned message, so a chart counts rules without parsing
+# ``symbols``.
+OUTBOUND_SCAN_SYMBOLS = TelemetryTable(
+    "outbound_scan_symbols",
+    pyarrow.schema(
+        [
+            *ENVELOPE_FIELDS,
+            pyarrow.field("timestamp", pyarrow.timestamp("us"), nullable=False),
+            pyarrow.field("account", pyarrow.string(), nullable=False),
+            pyarrow.field("message_id", pyarrow.string()),
+            pyarrow.field("action", pyarrow.string(), nullable=False),
+            pyarrow.field("message_score", pyarrow.float64(), nullable=False),
+            pyarrow.field("symbol", pyarrow.string(), nullable=False),
+            pyarrow.field("score", pyarrow.float64(), nullable=False),
+        ]
+    ),
+)
+
+TABLES = (EVENTS, METRICS, OUTBOUND_SCANS, OUTBOUND_SCAN_SYMBOLS)
 
 # The newest reading of every gauge of every node that pushed in the last few minutes, rebuilt after
 # each load, so a card sums the nodes' current values instead of every reading in its period.

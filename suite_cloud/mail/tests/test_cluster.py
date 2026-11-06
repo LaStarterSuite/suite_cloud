@@ -823,3 +823,13 @@ class TestStalwartCluster(IntegrationTestCase):
         self.assertEqual(domain["dnsManagement"]["@type"], "Automatic")
         self.assertEqual(domain["dnsManagement"]["origin"], ROOT_DOMAIN)
         self.assertEqual(domain["dnsManagement"]["publishRecords"], {"mx": True, "dkim": True, "dmarc": True})
+
+
+class TestMailStoreRename(IntegrationTestCase):
+    def test_the_patch_renames_the_doctype_once(self) -> None:
+        from suite_cloud.patches.v1_0 import rename_stalwart_store_to_mail_store as patch_module
+
+        patch_module.execute()  # already renamed: nothing to do
+        self.assertTrue(frappe.db.exists("DocType", "Mail Store"))
+        self.assertFalse(frappe.db.exists("DocType", "Stalwart Store"))
+        self.assertEqual(frappe.get_meta("Stalwart Cluster").get_field("data_store").options, "Mail Store")

@@ -40,7 +40,8 @@ from suite_cloud.telemetry import (
     WEBHOOK_EVENTS,
 )
 from suite_cloud.telemetry.spool import Spool
-from suite_cloud.telemetry.status import CACHE_KEY, forget_contacts
+from suite_cloud.telemetry.status import EVENTS as EVENTS_STREAM
+from suite_cloud.telemetry.status import forget_contacts, get_seen_at
 from suite_cloud.tests.fixtures import configure_settings, production_logging
 
 NODE_IPS = ("203.0.113.5", "198.51.100.77")
@@ -219,9 +220,9 @@ class TestWebhook(PushTestCase):
 
         self.assertEqual(response, {"accepted": 2, "skipped": 0})
         # The server's last contact, for the status on its form.
-        self.assertIn("seen_at", frappe.cache.hget(CACHE_KEY, self.node.ipv4_address))
+        self.assertIsNotNone(get_seen_at(self.node.ipv4_address, EVENTS_STREAM))
         forget_contacts()
-        self.assertIsNone(frappe.cache.hget(CACHE_KEY, self.node.ipv4_address))
+        self.assertIsNone(get_seen_at(self.node.ipv4_address, EVENTS_STREAM))
         rows = sorted(self.rows(), key=lambda row: row["event"])
         self.assertEqual(
             [(row["event"], row["level"]) for row in rows],
@@ -256,6 +257,18 @@ class TestWebhook(PushTestCase):
         log_error.assert_called_once()
         self.assertIn("5 events skipped", log_error.call_args.args[0])
         self.assertEqual(len(self.rows()), 1)
+
+    def test_the_outbound_scan_events_arrive_on_the_events_stream(self) -> None:
+        names = (
+            "milter.action-accept",
+            "milter.action-reply-code",
+            "milter.action-reject",
+            "milter.action-discard",
+            "milter.action-temp-fail",
+        )
+        batch = [webhook_event(str(index), name, elapsed=12) for index, name in enumerate(names)]
+        self.assertEqual(self.push("events", batch), {"accepted": len(names), "skipped": 0})
+        self.assertEqual({(row["event"], row["level"]) for row in self.rows()}, {(n, "info") for n in names})
 
     def test_a_resent_batch_keeps_its_id(self) -> None:
         batch = [webhook_event("1"), webhook_event("2")]

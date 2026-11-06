@@ -9,6 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, flt
 
 from suite_cloud.mail import sending_limits
+from suite_cloud.mail.cluster import outbound_scan
 from suite_cloud.mail.cluster.plan import DISABLED_ROLE_DESCRIPTION
 from suite_cloud.mail.doctype.mail_send_usage.mail_send_usage import delete_usage, sent_by_account
 from suite_cloud.mail.stalwart import get_account_client
@@ -59,6 +60,7 @@ class MailAccount(QuotaHolder, Document):
         monthly_send_limit: DF.Int
         new_password: DF.Password | None
         quotas: DF.Table[MailQuota]
+        skip_outbound_scan: DF.Check
         tenant: DF.Link | None
         stalwart_id: DF.Data | None
         time_zone: DF.Data | None
@@ -145,6 +147,8 @@ class MailAccount(QuotaHolder, Document):
             account_credentials.push(self, before=None)
             if not self.enabled:
                 self.push_enabled()
+            if self.skip_outbound_scan:
+                self.push_scan_exemption()
         except Exception:
             sync.push_destroy(self, "accounts")  # the insert rolls back; the account must not survive
             raise
@@ -156,6 +160,8 @@ class MailAccount(QuotaHolder, Document):
         before = self.get_doc_before_save()
         if not before:
             return
+        if bool(before.skip_outbound_scan) != bool(self.skip_outbound_scan):
+            self.push_scan_exemption()  # first: a refusal leaves nothing else changed on the cluster
 
         patch = {}
         if before.display_name != self.display_name:
@@ -190,6 +196,8 @@ class MailAccount(QuotaHolder, Document):
             sending_limits.clear_limits_after_commit(self.name)
 
     def on_trash(self) -> None:
+        if self.skip_outbound_scan:
+            self.push_scan_exemption(is_exempt=False)
         sync.push_destroy(self, "accounts")
         delete_usage(self.name)
         sending_limits.clear_limits_after_commit(self.name)
@@ -209,6 +217,13 @@ class MailAccount(QuotaHolder, Document):
             time_zone=self.time_zone or None,
             quotas=self.quota_map(),
         )
+
+    def push_scan_exemption(self, is_exempt: bool | None = None) -> None:
+        """The cluster's copy of Skip Outbound Spam Scan, which the milter reads."""
+
+        is_exempt = bool(self.skip_outbound_scan) if is_exempt is None else is_exempt
+        cluster = frappe.get_cached_doc("Stalwart Cluster", self.cluster)
+        outbound_scan.set_exempt(cluster, self.email, is_exempt)
 
     def push_enabled(self) -> None:
         """Disabled accounts keep receiving mail but lose every other permission via a cluster role."""

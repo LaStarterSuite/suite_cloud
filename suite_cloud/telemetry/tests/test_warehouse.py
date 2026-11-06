@@ -13,7 +13,16 @@ from frappe.tests import IntegrationTestCase
 from frappe.utils import get_files_path
 
 from suite_cloud.mail.tests.fixtures import error_log_count, make_cluster, make_node
-from suite_cloud.telemetry import CURRENT_METRICS, EVENT_DATA_COLUMNS, EVENTS, METRICS, TelemetryTable
+from suite_cloud.telemetry import (
+    CURRENT_METRICS,
+    EVENT_DATA_COLUMNS,
+    EVENTS,
+    METRICS,
+    OUTBOUND_SCAN_SYMBOLS,
+    OUTBOUND_SCANS,
+    TelemetryTable,
+)
+from suite_cloud.telemetry.outbound_scans import get_scan_rows
 from suite_cloud.telemetry.spool import Spool
 from suite_cloud.telemetry.warehouse import Warehouse
 from suite_cloud.tests.fixtures import configure_settings
@@ -43,7 +52,15 @@ STALWART_COLUMNS = (
 )
 CODE_ONLY_COLUMNS = (None, None, None, None, "550 rejected", "421", None, None, None, None, None, None)
 NO_DATA_COLUMNS = (None,) * len(EVENT_DATA_COLUMNS)
-TABLE_NAMES = {"events", "metrics", "nodes", "mail_domains", "current_metrics"}
+TABLE_NAMES = {
+    "events",
+    "metrics",
+    "outbound_scans",
+    "outbound_scan_symbols",
+    "nodes",
+    "mail_domains",
+    "current_metrics",
+}
 
 
 def event(**fields) -> dict:
@@ -182,6 +199,29 @@ class TestWarehouse(IntegrationTestCase):
         self.warehouse.load_pending()
 
         self.assertEqual(self.event_data_columns(), [STALWART_COLUMNS, CODE_ONLY_COLUMNS, NO_DATA_COLUMNS])
+
+    def test_a_load_takes_the_outbound_scans_and_their_rules(self) -> None:
+        record = {
+            "time": NOW.replace(tzinfo=UTC).timestamp(),
+            "user": "ana@acme.test",
+            "action": "reject",
+            "score": 16.2,
+            "symbols": {"GTUBE": 15.0, "MIME_GOOD": -0.1},
+        }
+        configure_settings(outbound_scan_mode="Enforce", outbound_scan_reject_score=15)
+        rows, symbol_rows, _problems = get_scan_rows([record])
+        self.stage(OUTBOUND_SCANS, rows)
+        self.stage(OUTBOUND_SCAN_SYMBOLS, symbol_rows)
+
+        added = self.warehouse.load_pending()
+
+        self.assertEqual(added, {"outbound_scans": 1, "outbound_scan_symbols": 2})
+        self.assertEqual(
+            self.warehouse.query(
+                "SELECT account_domain, action, score, reject_score FROM outbound_scans", {}
+            ),
+            [("acme.test", "reject", 16.2, 15.0)],
+        )
 
     def test_a_table_from_before_the_extracted_columns_gets_them_filled_on_the_next_load(self) -> None:
         legacy = TelemetryTable(EVENTS.name, EVENTS.schema)

@@ -71,7 +71,7 @@ class TestApiVerbs(UnitTestCase):
             names.add(name)
             with self.subTest(path):
                 self.assertTrue(getattr(function, "is_telemetry_api", False))
-        self.assertEqual(names, {"webhook", "otlp", "check"})
+        self.assertEqual(names, {"webhook", "otlp", "outbound_scans", "check"})
 
 
 class TestApiInput(UnitTestCase):

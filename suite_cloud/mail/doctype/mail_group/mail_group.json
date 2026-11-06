@@ -69,7 +69,7 @@
    "fieldname": "disable_receiving",
    "fieldtype": "Check",
    "label": "Disable Receiving",
-   "description": "Mail sent to the group bounces. Mail of the members is not affected."
+   "description": "Mail sent to the group bounces. The members' own mail is not affected."
   },
   {
    "fieldname": "aliases_section",
@@ -137,7 +137,7 @@
    "table_fieldname": "groups"
   }
  ],
- "modified": "2026-10-28 18:40:27.034609",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Mail Group",

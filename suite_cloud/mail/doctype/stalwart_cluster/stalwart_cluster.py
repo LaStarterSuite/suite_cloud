@@ -10,7 +10,17 @@ from frappe.model.document import Document
 from frappe.utils import cint, now
 from redis.exceptions import LockNotOwnedError
 
-from suite_cloud.mail.cluster import bootstrap, dns, egress, naming, plan, push, reconcile
+from suite_cloud.mail.cluster import (
+    bootstrap,
+    dns,
+    egress,
+    naming,
+    outbound_scan,
+    plan,
+    push,
+    reconcile,
+    rspamd,
+)
 from suite_cloud.mail.stalwart import forget_sessions, get_admin_client, get_client
 from suite_cloud.mail.stalwart.credentials import Credential
 from suite_cloud.provisioning.ssh import generate_keypair, validate_ssh_user_field
@@ -61,6 +71,7 @@ class StalwartCluster(Document):
         last_config_sync_error: DF.SmallText | None
         max_daily_send_limit: DF.Int
         max_monthly_send_limit: DF.Int
+        outbound_scan_store: DF.Link | None
         region: DF.Link
         relay_password: DF.Password | None
         relay_username: DF.Data | None
@@ -116,6 +127,9 @@ class StalwartCluster(Document):
 
     def after_insert(self) -> None:
         dns.sync_spf_record(self)
+
+    def onload(self) -> None:
+        self.set_onload("outdated_scanner_nodes", rspamd.get_outdated_nodes(self))
 
     def on_update(self) -> None:
         before = self.get_doc_before_save()
@@ -186,7 +200,7 @@ class StalwartCluster(Document):
     def validate_stores(self) -> None:
         for field, kind in STORE_KINDS.items():
             if store_name := self.get(field):
-                store = frappe.get_cached_doc("Stalwart Store", store_name)
+                store = frappe.get_cached_doc("Mail Store", store_name)
                 if store.kind != kind:
                     frappe.throw(_("{0} must be a {1} store.").format(self.meta.get_label(field), kind))
 
@@ -201,6 +215,8 @@ class StalwartCluster(Document):
         has_redis = bool(in_memory and in_memory.type.startswith("Redis"))
         self.coordinator = "Default" if has_redis and not self.single_node else "Disabled"
         self.validate_node_count(self.node_count())
+        if outbound_scan_store := self.get_store("outbound_scan_store"):
+            rspamd.get_redis_options(outbound_scan_store)
 
     def validate_node_count(self, count: int) -> None:
         """Nodes share coordination and sending counters through Redis, so only one may run without."""
@@ -239,7 +255,7 @@ class StalwartCluster(Document):
         ]
 
     def get_store(self, field: str) -> Document | None:
-        return frappe.get_cached_doc("Stalwart Store", self.get(field)) if self.get(field) else None
+        return frappe.get_cached_doc("Mail Store", self.get(field)) if self.get(field) else None
 
     def stores(self) -> list[Document]:
         return [store for field in STORE_KINDS if (store := self.get_store(field))]
@@ -283,11 +299,13 @@ class StalwartCluster(Document):
             return self.apply_config()
 
     def apply_config(self) -> dict:
-        """Pushes the plan; the caller holds the push lock."""
+        """Pushes the plan, then repairs the trusted accounts' keys a failed save or a hand edit
+        left wrong; the caller holds the push lock."""
 
         rendered = plan.cluster_plan(self)
         result = self.get_client().apply(rendered)
         self.get_client().reload_settings()
+        outbound_scan.sync_exempt_accounts(self)
         self.bump_config_version(rendered)
         self.db_set(
             {"last_config_sync_at": now(), "last_config_sync_error": None, "drift_report": None},
@@ -369,6 +387,14 @@ class StalwartCluster(Document):
         from suite_cloud.telemetry.install import install_tokens
 
         return install_tokens(self)
+
+    @frappe.whitelist()
+    def install_outbound_scanners(self) -> list[str]:
+        """Installs Rspamd with the current settings on every running node. The milter is switched
+        on once all of them have it."""
+
+        frappe.only_for("System Manager")
+        return rspamd.install_scanners(self)
 
 
 def on_doctype_update() -> None:

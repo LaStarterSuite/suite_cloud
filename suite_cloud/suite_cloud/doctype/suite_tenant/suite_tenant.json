@@ -226,7 +226,7 @@
   },
   {
    "default": "2000",
-   "description": "Daily Send Limit of a new account: recipients per UTC day, at most the cluster's max.",
+   "description": "Daily Send Limit of a new account, in recipients per UTC day. At most the cluster maximum.",
    "fieldname": "default_daily_send_limit",
    "fieldtype": "Int",
    "label": "Default Daily Send Limit",
@@ -237,7 +237,7 @@
   },
   {
    "default": "10000",
-   "description": "Monthly Send Limit of a new account: recipients per UTC month, at most the cluster's max.",
+   "description": "Monthly Send Limit of a new account, in recipients per UTC month. At most the cluster maximum.",
    "fieldname": "default_monthly_send_limit",
    "fieldtype": "Int",
    "label": "Default Monthly Send Limit",
@@ -252,7 +252,7 @@
   },
   {
    "default": "0",
-   "description": "Lets the tenant set an account's send limits through the API, up to the cluster's max. Off, the API refuses a limit.",
+   "description": "Lets the tenant set each account's send limits through the API, up to the cluster maximum. When off, the API refuses a limit.",
    "fieldname": "allow_custom_send_limits",
    "fieldtype": "Check",
    "label": "Tenant May Set Send Limits",
@@ -313,7 +313,7 @@
    "link_fieldname": "tenant"
   }
  ],
- "modified": "2026-10-28 18:15:24.800932",
+ "modified": "2026-11-05 23:00:00.000000",
  "modified_by": "Administrator",
  "module": "Suite Cloud",
  "name": "Suite Tenant",

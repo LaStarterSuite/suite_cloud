@@ -71,9 +71,9 @@ frappe.ui.form.on('Egress Gateway', {
 	},
 
 	show_telemetry_status(frm) {
+		// One indicator per kind of telemetry; the server decides the state and the color.
 		frappe.xcall('suite_cloud.telemetry.status.get_server_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
-			const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
-			frm.dashboard.add_comment(frappe.utils.escape_html(status.message), colors[status.state], true)
+			for (const item of status.indicators) frm.dashboard.add_indicator(frappe.utils.escape_html(item.text), item.color)
 		})
 	},
 

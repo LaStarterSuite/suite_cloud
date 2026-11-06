@@ -49,6 +49,11 @@ frappe.ui.form.on('Stalwart Node', {
 					),
 				__('Actions'),
 			)
+			frm.add_custom_button(
+				__('Install Outbound Scanner'),
+				() => frm.events.call(frm, 'install_outbound_scanner', __('Queueing the scanner install...')),
+				__('Actions'),
+			)
 		}
 		if (frm.doc.status === 'Draining') {
 			frm.add_custom_button(__('Restore'), () => frm.events.call(frm, 'restore', __('Adding to ingress DNS...')), __('Actions'))
@@ -66,9 +71,9 @@ frappe.ui.form.on('Stalwart Node', {
 	},
 
 	show_telemetry_status(frm) {
+		// One indicator per kind of telemetry; the server decides the state and the color.
 		frappe.xcall('suite_cloud.telemetry.status.get_server_status', { doctype: frm.doctype, name: frm.doc.name }).then((status) => {
-			const colors = { ok: 'green', silent: 'red', unknown: 'blue' }
-			frm.dashboard.add_comment(frappe.utils.escape_html(status.message), colors[status.state], true)
+			for (const item of status.indicators) frm.dashboard.add_indicator(frappe.utils.escape_html(item.text), item.color)
 		})
 	},
 
