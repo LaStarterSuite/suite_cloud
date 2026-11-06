@@ -122,7 +122,7 @@ def scan_indicators(node: Document) -> list[dict]:
         return [indicator(SCAN_CHECK_IN, "off", _("off"))]
     if not node.outbound_scanner_installed:
         return [indicator(SCAN_CHECK_IN, "off", _("not installed"))]
-    if node.outbound_scanner_digest != rspamd.get_config_digest():
+    if node.outbound_scanner_digest != rspamd.get_config_digest(node.get_cluster()):
         return [indicator(SCAN_CHECK_IN, "outdated", _("scanner out of date"))]
 
     checked_in = get_seen_at(node.ipv4_address, SCAN_CHECK_IN)

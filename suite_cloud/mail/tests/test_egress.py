@@ -89,7 +89,7 @@ class TestEgress(IntegrationTestCase):
         self.assertEqual(self.gateway.status, "Pending")
         self.assertEqual(self.gateway.name, f"g1.{self.cluster.default_domain}")
         self.assertEqual(self.gateway.base_url, f"https://g1.{self.cluster.default_domain}")
-        self.assertEqual(frappe.db.get_value("Stalwart Store", self.gateway.data_store, "type"), "RocksDb")
+        self.assertEqual(frappe.db.get_value("Mail Store", self.gateway.data_store, "type"), "RocksDb")
         self.assertEqual(len(self.gateway.get_password("admin_password")), 32)
         record = frappe.get_all(
             "DNS Record", {"managed_by": self.gateway.name}, ["host", "value", "category"], order_by="type"

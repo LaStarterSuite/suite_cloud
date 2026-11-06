@@ -32,6 +32,8 @@
   "column_break_stores",
   "search_store",
   "in_memory_store",
+  "outbound_scan_section",
+  "outbound_scan_store",
   "derived_section",
   "coordinator",
   "column_break_derived",
@@ -220,7 +222,7 @@
    "fieldname": "data_store",
    "fieldtype": "Link",
    "label": "Data Store",
-   "options": "Stalwart Store",
+   "options": "Mail Store",
    "reqd": 1
   },
   {
@@ -228,7 +230,7 @@
    "fieldname": "blob_store",
    "fieldtype": "Link",
    "label": "Blob Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
   },
   {
    "fieldname": "column_break_stores",
@@ -239,14 +241,26 @@
    "fieldname": "search_store",
    "fieldtype": "Link",
    "label": "Search Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
   },
   {
    "description": "Caches, rate limits and coordination. Blank uses the data store. More than one node needs Redis.",
    "fieldname": "in_memory_store",
    "fieldtype": "Link",
    "label": "In-Memory Store",
-   "options": "Stalwart Store"
+   "options": "Mail Store"
+  },
+  {
+   "fieldname": "outbound_scan_section",
+   "fieldtype": "Section Break",
+   "label": "Outbound Scan"
+  },
+  {
+   "description": "Redis that the nodes' spam scanners share for fuzzy hashes and history. Blank runs them without Redis.",
+   "fieldname": "outbound_scan_store",
+   "fieldtype": "Link",
+   "label": "Outbound Scan Store",
+   "options": "Mail Store"
   },
   {
    "fieldname": "derived_section",
@@ -511,7 +525,7 @@
    "link_fieldname": "cluster"
   }
  ],
- "modified": "2026-11-05 23:00:00.000000",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
  "name": "Stalwart Cluster",

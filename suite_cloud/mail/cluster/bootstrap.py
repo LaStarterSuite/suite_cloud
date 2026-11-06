@@ -158,20 +158,24 @@ def build_node_variables(context: dict) -> dict:
         ],
     }
     variables.update(token_variables(context))
-    variables.update(rspamd_variables())
+    variables.update(rspamd_variables(cluster))
+    if redis_secrets := rspamd.get_redis_secrets(cluster):
+        variables["__secret_keys__"].append("rspamd_files")
+        variables["__secret_values__"].extend(redis_secrets)
     return variables
 
 
-def rspamd_variables() -> dict:
+def rspamd_variables(cluster: Document) -> dict:
     """What install-rspamd.yml needs. An Egress Gateway's variables lack ``install_rspamd``: it
     relays mail the node scanned already."""
 
-    files = rspamd.get_rspamd_files()
+    files = rspamd.get_rspamd_files(cluster)
     return {
         "install_rspamd": True,
         "rspamd_version": get_config("rspamd_version") or "",
         "rspamd_files": files,
-        "rspamd_digest": rspamd.get_config_digest(files),
+        "rspamd_private_files": list(rspamd.PRIVATE_FILES),
+        "rspamd_digest": rspamd.get_files_digest(files),
         "rspamd_cpu_placeholder": rspamd.CPU_COUNT_PLACEHOLDER,
     }
 

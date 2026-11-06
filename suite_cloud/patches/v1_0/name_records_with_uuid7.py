@@ -8,7 +8,7 @@ DOCTYPES = (
     "DNS Record",
     "Mailing List Recipient",
     "Server Job",
-    "Stalwart Store",
+    "Mail Store",
     "Server Alert",
 )  # renamed before this runs
 

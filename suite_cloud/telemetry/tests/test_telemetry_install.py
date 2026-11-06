@@ -250,7 +250,10 @@ class TestTelemetryInstall(IntegrationTestCase):
         status.forget_contacts()
         self.addCleanup(status.forget_contacts)
         self.node.db_set(
-            {"outbound_scanner_installed": 1, "outbound_scanner_digest": rspamd.get_config_digest()}
+            {
+                "outbound_scanner_installed": 1,
+                "outbound_scanner_digest": rspamd.get_config_digest(self.node.get_cluster()),
+            }
         )
         self.node.reload()
         self.assertEqual(

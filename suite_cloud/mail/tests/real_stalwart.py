@@ -134,7 +134,7 @@ class RealStalwart:
 
     def bootstrap_value(self) -> dict:
         store = frappe.get_doc(
-            {"doctype": "Stalwart Store", "kind": "Data", "type": "RocksDb", "path": self.path("data")}
+            {"doctype": "Mail Store", "kind": "Data", "type": "RocksDb", "path": self.path("data")}
         )
         return {
             "serverHostname": HOSTNAME,

@@ -87,7 +87,7 @@ Then set up the cluster:
 1. In **Suite Cloud Settings > Certificates**, enter the **ACME Contact Email**.
 2. For a throwaway cluster, set **ACME Directory URL** to the Let's Encrypt staging URL, `https://acme-staging-v02.api.letsencrypt.org/directory`. This keeps you below the production rate limits.
 3. With a staging certificate, clear **Suite Cloud Settings > Stalwart > Verify Stalwart TLS Certificates**.
-4. Create a **Stalwart Store** with **Kind** Data and **Type** RocksDb.
+4. Create a **Mail Store** with **Kind** Data and **Type** RocksDb.
 5. Create a **Mail Region** with the code `bom` and the title Mumbai, then a **Stalwart Cluster** in it with your zone and that store. Its hostname is `mail.bom.<zone>`.
 6. Copy the cluster's SSH public key into `~/.ssh/authorized_keys` on the VPS.
 7. At the VPS provider, set the reverse DNS (PTR) of the IPv4 address to the node's hostname, for example `n1.mail.bom.example.com`.

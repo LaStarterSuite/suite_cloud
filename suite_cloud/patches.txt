@@ -2,6 +2,7 @@
 suite_cloud.patches.v1_0.drop_legacy_deployment_doctypes
 suite_cloud.patches.v1_0.rename_suite_site_to_suite_tenant
 suite_cloud.patches.v1_0.rename_telemetry_alert_to_server_alert
+suite_cloud.patches.v1_0.rename_stalwart_store_to_mail_store
 
 [post_model_sync]
 suite_cloud.patches.v1_0.move_dns_provider_to_dns_zone

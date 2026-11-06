@@ -11,7 +11,7 @@ from suite_cloud.api.mail import accounts, domains
 from suite_cloud.mail.cluster import bootstrap, egress, outbound_scan, plan, push, quota, rspamd, telemetry
 from suite_cloud.mail.stalwart.errors import StalwartError
 from suite_cloud.mail.tests import fake_stalwart
-from suite_cloud.mail.tests.fixtures import make_node
+from suite_cloud.mail.tests.fixtures import make_node, make_store
 from suite_cloud.mail.tests.test_tenant_api import TenantApiTestCase
 from suite_cloud.patches.v1_0 import fill_outbound_scan_defaults
 from suite_cloud.provisioning.ansible import playbook_task_names
@@ -212,7 +212,7 @@ class TestTrustedAccounts(OutboundScanTestCase):
 
 class TestRspamd(OutboundScanTestCase):
     def test_the_files_follow_the_mode_and_score(self) -> None:
-        files = rspamd.get_rspamd_files()
+        files = rspamd.get_rspamd_files(self.cluster)
         actions = files["/etc/rspamd/local.d/actions.conf"]
         self.assertEqual(actions, "reject = 15;\nadd_header = null;\ngreylist = null;\n")
         settings = files["/etc/rspamd/local.d/settings.conf"]
@@ -228,17 +228,82 @@ class TestRspamd(OutboundScanTestCase):
         for path, content in files.items():
             with self.subTest(path):
                 self.assertIsNone(re.search(r"\{\{|\{%|\{#", content))
-        digest = rspamd.get_config_digest()
+        digest = rspamd.get_config_digest(self.cluster)
 
         configure_settings(outbound_scan_reject_score=12.5)
-        self.assertIn("reject = 12.5;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/actions.conf"])
-        self.assertNotEqual(rspamd.get_config_digest(), digest)
+        self.assertIn(
+            "reject = 12.5;", rspamd.get_rspamd_files(self.cluster)["/etc/rspamd/local.d/actions.conf"]
+        )
+        self.assertNotEqual(rspamd.get_config_digest(self.cluster), digest)
 
         configure_settings(outbound_scan_mode="Observe")
-        self.assertIn("reject = null;", rspamd.get_rspamd_files()["/etc/rspamd/local.d/actions.conf"])
-        observe = rspamd.get_config_digest()
+        self.assertIn(
+            "reject = null;", rspamd.get_rspamd_files(self.cluster)["/etc/rspamd/local.d/actions.conf"]
+        )
+        observe = rspamd.get_config_digest(self.cluster)
         configure_settings(outbound_scan_reject_score=20)
-        self.assertEqual(rspamd.get_config_digest(), observe)  # Observe refuses at no score
+        self.assertEqual(rspamd.get_config_digest(self.cluster), observe)  # Observe refuses at no score
+
+    def test_an_outbound_scan_store_shares_fuzzy_hashes_and_history(self) -> None:
+        without = rspamd.get_rspamd_files(self.cluster)
+        self.assertFalse(set(rspamd.PRIVATE_FILES) & set(without))
+        store = make_store("In-Memory", "Redis", url="rediss://scan:p%22ss@redis.example.test:6380/1")
+        self.cluster.db_set("outbound_scan_store", store.name)
+
+        files = rspamd.get_rspamd_files(self.cluster)
+        fuzzy = files["/etc/rspamd/local.d/worker-fuzzy.inc"]
+        for line in (
+            'servers = "redis.example.test:6380";',
+            'username = "scan";',
+            'password = "p\\"ss";',
+            'db = "1";',
+            "ssl = true;",
+            "count = 1;",
+            'allow_update = ["127.0.0.1"];',
+        ):
+            self.assertIn(line, fuzzy)
+        history = files["/etc/rspamd/local.d/history_redis.conf"]
+        self.assertIn(f'key_prefix = "rs_history_{self.cluster.name}";', history)  # one per cluster
+        self.assertIn('password = "p\\"ss";', history)
+        check = files["/etc/rspamd/override.d/fuzzy_check.conf"]
+        self.assertIn('rule "local"', check)
+        self.assertNotIn("rspamd.com", check)  # the stock rule sends hashes out
+        self.assertIn('"LOCAL_FUZZY_DENIED"', files["/etc/rspamd/local.d/fuzzy_group.conf"])
+        settings = files["/etc/rspamd/local.d/settings.conf"]
+        self.assertIn('groups_disabled = ["neural", "statistics", "asn", "mx_check"];', settings)
+        for path, content in files.items():
+            with self.subTest(path):
+                self.assertIsNone(re.search(r"\{\{|\{%|\{#", content))
+        self.assertIn(self.node.name, rspamd.get_outdated_nodes(self.cluster))
+
+        variables = bootstrap.build_node_variables({"node": self.node.name})
+        self.assertEqual(variables["rspamd_files"], files)
+        self.assertEqual(variables["rspamd_private_files"], list(rspamd.PRIVATE_FILES))
+        self.assertIn("rspamd_files", variables["__secret_keys__"])  # the job snapshot hides them
+        self.assertIn('p"ss', variables["__secret_values__"])
+
+        self.cluster.db_set("outbound_scan_store", None)
+        self.assertEqual(rspamd.get_rspamd_files(self.cluster), without)
+
+    def test_the_outbound_scan_store_is_a_plain_redis(self) -> None:
+        cases = {
+            "Redis Cluster": make_store("In-Memory", "RedisCluster", urls="redis://a.example.test:6379"),
+            "a data store": make_store("Data", "PostgreSql", host="db.example.test"),
+            "another scheme": make_store("In-Memory", "Redis", url="unix:///run/redis.sock"),
+            "a database name": make_store("In-Memory", "Redis", url="redis://redis.example.test/mail"),
+            "Jinja": make_store("In-Memory", "Redis", url="redis://:a{{b@redis.example.test"),
+        }
+        for case, store in cases.items():
+            with self.subTest(case):
+                self.cluster.outbound_scan_store = store.name
+                self.assertRaises(frappe.ValidationError, self.cluster.validate_stores)
+
+        store = make_store("In-Memory", "Redis", url="redis://[2001:db8::1]")
+        self.cluster.outbound_scan_store = store.name
+        self.cluster.validate_stores()
+        self.assertEqual(rspamd.get_redis_options(store)["servers"], "[2001:db8::1]:6379")
+        self.cluster.db_set("outbound_scan_store", store.name)
+        self.assertRaises(frappe.ValidationError, store.delete)  # the cluster still uses it
 
     def test_the_playbook_removes_rspamd_files_it_does_not_write(self) -> None:
         """A hand-made actions.conf or rspamd.conf.override on n1 turned the refusals off."""
@@ -256,7 +321,7 @@ class TestRspamd(OutboundScanTestCase):
     def test_the_node_records_each_scan_and_ships_it(self) -> None:
         from suite_cloud.telemetry.tests.test_outbound_scans import load_shipper
 
-        files = rspamd.get_rspamd_files()
+        files = rspamd.get_rspamd_files(self.cluster)
         recorder = files[rspamd.RECORDER_PATH]
         self.assertIn("type = 'idempotent'", recorder)  # runs after the score, refused mail too
         self.assertIn(f'local SPOOL = "{load_shipper().SPOOL}"', recorder)
@@ -280,8 +345,8 @@ class TestRspamd(OutboundScanTestCase):
     def test_only_a_node_installs_rspamd(self) -> None:
         variables = bootstrap.build_node_variables({"node": self.node.name})
         self.assertTrue(variables["install_rspamd"])
-        self.assertEqual(variables["rspamd_files"], rspamd.get_rspamd_files())
-        self.assertEqual(variables["rspamd_digest"], rspamd.get_config_digest())
+        self.assertEqual(variables["rspamd_files"], rspamd.get_rspamd_files(self.cluster))
+        self.assertEqual(variables["rspamd_digest"], rspamd.get_config_digest(self.cluster))
         self.assertEqual(variables["rspamd_version"], "")
 
         gateway = frappe.get_doc(
@@ -339,7 +404,7 @@ class TestRspamd(OutboundScanTestCase):
 
     def test_the_cluster_lists_outdated_nodes(self) -> None:
         self.assertEqual(rspamd.get_outdated_nodes(self.cluster), [self.node.name])
-        self.node.db_set("outbound_scanner_digest", rspamd.get_config_digest())
+        self.node.db_set("outbound_scanner_digest", rspamd.get_config_digest(self.cluster))
         self.assertEqual(rspamd.get_outdated_nodes(self.cluster), [])
         configure_settings(outbound_scan_reject_score=10)
         self.assertEqual(rspamd.get_outdated_nodes(self.cluster), [self.node.name])

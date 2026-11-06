@@ -175,15 +175,17 @@ class Alerts:
             return []
         nodes = frappe.get_all(
             "Stalwart Node",
-            {
-                "status": ("in", SCANNING_STATUSES),
-                "outbound_scanner_installed": 1,
-                "outbound_scanner_digest": rspamd.get_config_digest(),  # an older shipper may not check in
-            },
-            ["ipv4_address", "hostname"],
+            {"status": ("in", SCANNING_STATUSES), "outbound_scanner_installed": 1},
+            ["ipv4_address", "hostname", "cluster", "outbound_scanner_digest"],
         )
+        digests = {
+            cluster: rspamd.get_config_digest(frappe.get_cached_doc("Stalwart Cluster", cluster))
+            for cluster in {node.cluster for node in nodes}
+        }
         findings = []
         for node in nodes:
+            if node.outbound_scanner_digest != digests[node.cluster]:
+                continue  # an older shipper may not check in
             seen = status.get_seen_at(node.ipv4_address, status.SCAN_CHECK_IN)
             if seen and not status.is_recent(seen):
                 findings.append(

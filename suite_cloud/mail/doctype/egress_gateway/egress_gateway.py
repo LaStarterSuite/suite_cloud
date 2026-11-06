@@ -116,7 +116,7 @@ class EgressGateway(Document):
     def create_local_store(self) -> Document:
         store = frappe.get_doc(
             {
-                "doctype": "Stalwart Store",
+                "doctype": "Mail Store",
                 "title": f"{self.hostname} local data",
                 "kind": "Data",
                 "type": "RocksDb",
@@ -130,7 +130,7 @@ class EgressGateway(Document):
         return frappe.get_cached_doc("Stalwart Cluster", self.cluster)
 
     def get_store(self, field: str = "data_store") -> Document | None:
-        return frappe.get_cached_doc("Stalwart Store", self.get(field)) if self.get(field) else None
+        return frappe.get_cached_doc("Mail Store", self.get(field)) if self.get(field) else None
 
     def pools(self) -> list[Document]:
         names = frappe.get_all(

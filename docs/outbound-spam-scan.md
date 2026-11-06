@@ -65,7 +65,7 @@ Each call runs in the request and runs `ReloadLookupStores` after a change. `Rel
 
 `install-stalwart.yml` imports `install-rspamd.yml`, so provisioning (`bootstrap-cluster.yml`, `configure-node.yml`) and `upgrade-stalwart.yml` install Rspamd too. Only a Stalwart Node's variables set `install_rspamd`. An Egress Gateway skips the play: it relays mail that a node scanned already.
 
-The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), removes every Rspamd file it does not write, writes the files below, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, waits for port 11332, and starts `suite-cloud-scans.timer`. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound and runs without Redis, so Bayes, neural, rate limits, replies and history are off.
+The playbook adds the `rspamd.com/apt-stable` repository (the Ubuntu package is old and unsupported), installs `rspamd` (pinned to **Rspamd Version** when set), removes every Rspamd file it does not write, writes the files below, runs `rspamadm configtest`, starts Rspamd or reloads it on a change, waits for port 11332, and starts `suite-cloud-scans.timer`. Rspamd listens on loopback only, so the firewall does not change. It resolves through the node's Unbound. Without an **Outbound Scan Store** it runs without Redis, so Bayes, neural, rate limits, replies, fuzzy hashes and the stored history are off (see [Shared Redis](#shared-redis)).
 
 Suite Cloud owns the node's Rspamd configuration. The playbook deletes each file in `/etc/rspamd/local.d/` and `/etc/rspamd/override.d/` that it does not write, except the `*.example` files, and `/etc/rspamd/rspamd.conf.local`, `rspamd.conf.local.override` and `rspamd.conf.override`. A hand edit on a node is removed by the next install. Before this, a hand-made `actions.conf` (every threshold at 1000) and an `rspamd.conf.override` (the settings from a remote map) on the test node let a message with a score of 16.41 through in Enforce.
 
@@ -78,7 +78,7 @@ The files up to `arc.conf` are in `/etc/rspamd/local.d/`.
 | `worker-controller.inc` | `127.0.0.1:11334` |
 | `options.inc` | DNS at `127.0.0.1` with a 1 s timeout, `task_timeout = 4s` |
 | `actions.conf` | `reject` at the reject score (`null` in Observe and Off). `add_header` and `greylist` are off. The milter sends only signed-in senders' mail, so these are the outbound thresholds |
-| `settings.conf` | The `outbound` profile for `authenticated = yes`: the `fuzzy`, `neural`, `statistics`, `asn` and `mx_check` groups off |
+| `settings.conf` | The `outbound` profile for `authenticated = yes`: the `neural`, `statistics`, `asn` and `mx_check` groups off, and `fuzzy` too without an Outbound Scan Store. The stock fuzzy rule sends hashes of the mail to rspamd.com |
 | `logging.inc` | Notice level to `/var/log/rspamd/rspamd.log`, one line with the user, score and symbols per message |
 | `dkim_signing.conf`, `arc.conf` | `enabled = false`: Stalwart signs the message after the scan |
 | `/etc/rspamd/rspamd.local.lua` | The scan recorder: one JSON line per scanned message to `/var/lib/rspamd/suite-cloud-scans.jsonl` |
@@ -87,7 +87,35 @@ The files up to `arc.conf` are in `/etc/rspamd/local.d/`.
 
 The profile keeps the URL blocklists, phishing, MIME and attachment checks, and the header and body rules. A taken-over account sends mostly links, so the URL checks are the most useful ones. `milter_headers` keeps `skip_authenticated = true`, so outbound mail gets no `X-Spam-*` header.
 
-Suite Cloud renders the files in Python (`rspamd.get_rspamd_files()`) and passes them as job variables with their SHA-1 (`rspamd_digest`). Ansible templates the variables it is given, so the files must not hold `{{`, `{%` or `{#`. The playbook puts the node's vCPU count in place of `__CPU_COUNT__`.
+Suite Cloud renders the files for each cluster in Python (`rspamd.get_rspamd_files(cluster)`) and passes them as job variables with their SHA-1 (`rspamd_digest`). Ansible templates the variables it is given, so the files must not hold `{{`, `{%` or `{#`. The playbook puts the node's vCPU count in place of `__CPU_COUNT__`.
+
+## Shared Redis
+
+The **Outbound Scan Store** on the Stalwart Cluster links a Mail Store of kind In-Memory and type Redis. The nodes' Rspamd share it for two things: the fuzzy hashes that an operator learns in the web UI, and one scan history for the cluster. When the field is blank, Rspamd runs without Redis.
+
+Rspamd cannot use Redis Cluster. With Sentinel it also needs the master's address, which a Sentinel store does not hold. So the cluster refuses both. Suite Cloud reads the connection from the store's URL: `redis://user:password@host:6379/1`. `rediss://` turns on TLS, and `#insecure` at the end skips the certificate check.
+
+| File | Content |
+| --- | --- |
+| `local.d/worker-fuzzy.inc` | A fuzzy storage worker on `127.0.0.1:11335` that keeps its hashes in the store for 90 days. Only loopback can learn |
+| `override.d/fuzzy_check.conf` | Only the rule `local` on that worker. The stock rule that asks rspamd.com is gone. One learn counts in full |
+| `local.d/fuzzy_group.conf` | The scores: `LOCAL_FUZZY_DENIED` 12, `LOCAL_FUZZY_PROB` 5, `LOCAL_FUZZY_WHITE` -2.1 |
+| `local.d/history_redis.conf` | The last 1000 scans of the cluster under `rs_history_<cluster>`, so the web UI of each node shows them all |
+
+Only these two modules get the servers, and the `redis` section stays empty. So Bayes, neural, rate limits and replies stay off, and no other module writes to the store. A hash learned on one node matches on each node. The fuzzy keys use Rspamd's prefix `fz`, so clusters that share a store share their hashes too.
+
+`worker-fuzzy.inc` and `history_redis.conf` hold the Redis password. The playbook writes them as `root:_rspamd` with mode `0640`. The job snapshot hides `rspamd_files`, and the job log masks the password. The password cannot hold `{{`, `{%` or `{#`, because Ansible templates the variables.
+
+The store can be the cluster's In-Memory Store. Then Rspamd's keys share memory with Stalwart's coordination and sending counters. If Redis runs out of memory, it can evict Stalwart's keys, so leave room. For a clean split, use another DB number in the URL, or another Redis.
+
+A change to the field or the store changes the files, so the nodes show **scanner out of date** until **Install Outbound Scanners** runs. When the field is cleared, the install deletes the Redis files.
+
+To learn a message:
+
+1. Open a tunnel to a node: `ssh -L 11334:127.0.0.1:11334 <user>@<node>`.
+2. Open `http://localhost:11334` and go to **Learning**.
+3. Paste the message under **Fuzzy hashes**.
+4. Set the flag: 11 for spam, 12 for probable spam, 13 for good mail. Keep the weight at 1.
 
 ## Node state
 
@@ -167,7 +195,7 @@ The filters are Date Range (the last 7 days by default), Host, Account and Messa
 | Mail that Stalwart makes itself (Sieve redirects, vacation replies, forwards, bounces) | Not scanned |
 | An Egress Gateway | It does not scan. The node scanned the message before it relayed it |
 | A sender who sends test messages | Can learn what the scanner refuses |
-| No Redis | No Bayes, neural or reply learning. Scores come from rules and blocklists only |
+| No Bayes, neural or reply learning | Scores come from rules, blocklists and, with an Outbound Scan Store, the learned fuzzy hashes |
 | A refused message | The sending-limits hook counted its recipients at RCPT, so they still count |
 | Records while telemetry is off, or Suite Cloud is down for a long time | The node keeps 100 MB of them, then deletes the oldest |
 
@@ -176,7 +204,7 @@ The filters are Date Range (the last 7 days by default), Host, Account and Messa
 1. Deploy and migrate. The patch `fill_outbound_scan_defaults` sets Enforce and 15 on an existing site. Nothing changes on a cluster, because no node has the scanner installed.
 2. Set **Outbound Spam Scan Mode** to Observe.
 3. On the test cluster, save the hand-installed Rspamd config of `n1` if it is still needed. The playbook deletes every Rspamd file it does not write (see [Rspamd on each node](#rspamd-on-each-node)). Then run **Install Outbound Scanners**.
-4. Check on the live server that the plan matches the MtaMilter again on `hostname` and `port`, that `protocolVersion` takes `"v6"`, and, with `rspamadm configdump`, the proxy's `reject_message`, `enabled = false` for the normal worker and the group names.
+4. Check on the live server that the plan matches the MtaMilter again on `hostname` and `port`, that `protocolVersion` takes `"v6"`, and, with `rspamadm configdump`, the proxy's `reject_message`, `enabled = false` for the normal worker and the group names. With an Outbound Scan Store, check that `rspamadm configdump fuzzy_check` shows only the rule `local`.
 5. Send GTUBE over SMTP and JMAP, then clean mail, then stop Rspamd and send again, then mark the account as trusted and send GTUBE. Expect a refusal (in Enforce), `milter.action-accept` times under 150 ms, `250` with a `milter.io-error` warning, and `250`. Within six minutes each scanned message shows on the **Outbound Spam Scan** dashboard under its Message-ID. If it does not, check `journalctl -u suite-cloud-scans` on the node.
 6. Run **Install Outbound Scanners** on each production cluster. Leave Observe on for a week and read the scores of signed-in senders on the **Outbound Spam Scan** dashboard. Mark the trusted accounts.
 7. Set the reject score from the Outbound Scores chart, set the mode to Enforce, and run **Install Outbound Scanners** on each cluster again.

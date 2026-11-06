@@ -65,13 +65,14 @@
           loop: "{{ rspamd_local_files.files | map(attribute='path') | list | union(rspamd_top_level_overrides) | difference(rspamd_files.keys() | list) }}"
           register: rspamd_removed_files
 
+        # A file with the Redis password is readable by Rspamd's group only.
         - name: Write the Rspamd configuration
           copy:
             content: "{{ item.value | replace(rspamd_cpu_placeholder, ansible_processor_vcpus | string) }}"
             dest: "{{ item.key }}"
             owner: root
-            group: root
-            mode: "0644"
+            group: "{{ '_rspamd' if item.key in rspamd_private_files else 'root' }}"
+            mode: "{{ '0640' if item.key in rspamd_private_files else '0644' }}"
           loop: "{{ rspamd_files | dict2items }}"
           loop_control:
             label: "{{ item.key }}"

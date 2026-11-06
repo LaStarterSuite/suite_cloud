@@ -19,7 +19,7 @@ class TestRecordNames(IntegrationTestCase):
         configure_settings()
         cluster = make_cluster(multi_node=False)
         store = frappe.rename_doc(
-            "Stalwart Store", cluster.data_store, frappe.generate_hash(length=10), force=True
+            "Mail Store", cluster.data_store, frappe.generate_hash(length=10), force=True
         )
         legacy = {
             "DNS Record": self.insert_hash_named(
@@ -42,11 +42,11 @@ class TestRecordNames(IntegrationTestCase):
 
         name_records_with_uuid7.execute()
 
-        for doctype, name in {**legacy, "Stalwart Store": store}.items():
+        for doctype, name in {**legacy, "Mail Store": store}.items():
             self.assertFalse(frappe.db.exists(doctype, name), doctype)
         data_store = frappe.db.get_value("Stalwart Cluster", cluster.name, "data_store")
         self.assertEqual(UUID(data_store).version, 7)
-        self.assertTrue(frappe.db.exists("Stalwart Store", data_store))
+        self.assertTrue(frappe.db.exists("Mail Store", data_store))
         self.assertTrue(frappe.db.exists("Server Job", pending_job))
 
         renamed = frappe.get_all("Server Alert", pluck="name")

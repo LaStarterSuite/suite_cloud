@@ -18,6 +18,7 @@ frappe.ui.form.on('Stalwart Cluster', {
 		for (const [field, kind] of Object.entries(kinds)) {
 			frm.set_query(field, () => ({ filters: { kind } }))
 		}
+		frm.set_query('outbound_scan_store', () => ({ filters: { kind: 'In-Memory', type: 'Redis' } }))
 		frm.set_query('default_egress_pool', () => ({ filters: { cluster: frm.doc.name } }))
 	},
 

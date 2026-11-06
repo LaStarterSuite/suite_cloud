@@ -248,7 +248,7 @@ class TestScanAlerts(IntegrationTestCase):
             {
                 "status": "Active",
                 "outbound_scanner_installed": 1,
-                "outbound_scanner_digest": rspamd.get_config_digest(),
+                "outbound_scanner_digest": rspamd.get_config_digest(self.node.get_cluster()),
             }
         )
         self.alerts = Alerts(warehouse=None)
@@ -291,7 +291,10 @@ class TestScanAlerts(IntegrationTestCase):
 
     def test_only_a_running_node_with_the_current_scanner_is_watched(self) -> None:
         self.check_in(minutes_ago=45)
-        watched = {"status": "Active", "outbound_scanner_digest": rspamd.get_config_digest()}
+        watched = {
+            "status": "Active",
+            "outbound_scanner_digest": rspamd.get_config_digest(self.node.get_cluster()),
+        }
         cases = (
             ("an older scanner, whose shipper may not check in", {"outbound_scanner_digest": "older"}, {}),
             ("a node out of service", {"status": "Provisioned"}, {}),

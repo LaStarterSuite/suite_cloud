@@ -71,6 +71,7 @@ class StalwartCluster(Document):
         last_config_sync_error: DF.SmallText | None
         max_daily_send_limit: DF.Int
         max_monthly_send_limit: DF.Int
+        outbound_scan_store: DF.Link | None
         region: DF.Link
         relay_password: DF.Password | None
         relay_username: DF.Data | None
@@ -199,7 +200,7 @@ class StalwartCluster(Document):
     def validate_stores(self) -> None:
         for field, kind in STORE_KINDS.items():
             if store_name := self.get(field):
-                store = frappe.get_cached_doc("Stalwart Store", store_name)
+                store = frappe.get_cached_doc("Mail Store", store_name)
                 if store.kind != kind:
                     frappe.throw(_("{0} must be a {1} store.").format(self.meta.get_label(field), kind))
 
@@ -214,6 +215,8 @@ class StalwartCluster(Document):
         has_redis = bool(in_memory and in_memory.type.startswith("Redis"))
         self.coordinator = "Default" if has_redis and not self.single_node else "Disabled"
         self.validate_node_count(self.node_count())
+        if outbound_scan_store := self.get_store("outbound_scan_store"):
+            rspamd.get_redis_options(outbound_scan_store)
 
     def validate_node_count(self, count: int) -> None:
         """Nodes share coordination and sending counters through Redis, so only one may run without."""
@@ -252,7 +255,7 @@ class StalwartCluster(Document):
         ]
 
     def get_store(self, field: str) -> Document | None:
-        return frappe.get_cached_doc("Stalwart Store", self.get(field)) if self.get(field) else None
+        return frappe.get_cached_doc("Mail Store", self.get(field)) if self.get(field) else None
 
     def stores(self) -> list[Document]:
         return [store for field in STORE_KINDS if (store := self.get_store(field))]

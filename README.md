@@ -33,7 +33,7 @@ The app has three modules, so one CODEOWNERS line can cover each product:
 | Module | Folder | Holds |
 | --- | --- | --- |
 | **Suite Cloud** | `suite_cloud/suite_cloud` | What every hosted product shares: DNS Zone, DNS Record, Server Job, Suite Tenant, Suite Cloud Settings, plus `provisioning` (Ansible over SSH) and `dns` (provider client, resolver). |
-| **Mail** | `suite_cloud/mail` | The mail product: Stalwart Store, Cluster, Node, Egress Gateway and IP Pool, the mail directory (Mail Domain, Mail Account, Mail Group, Mailing List), and the `stalwart`, `cluster` and `tenancy` packages. |
+| **Mail** | `suite_cloud/mail` | The mail product: Mail Store, Cluster, Node, Egress Gateway and IP Pool, the mail directory (Mail Domain, Mail Account, Mail Group, Mailing List), and the `stalwart`, `cluster` and `tenancy` packages. |
 | **Telemetry** | `suite_cloud/telemetry` | The events and metrics Stalwart pushes: the rows made from its WebHook and OTLP requests, the spool that stages a batch as parquet, the `Warehouse` that loads the files into Frappe Insights' DuckDB and prunes them, the Insights dashboards for Stalwart, and `install`, which installs each server's Suite Cloud token and rolls the telemetry push out. |
 | **Hosting** | `suite_cloud/hosting` | Suite sites on Frappe Cloud: Region, Virtual Machine, Suite Site, Suite Tenant Request, the `central` clients (Central, Pilot, the site's REST API) and the `machines`, `sites`, `domains` and `capacity` steps. |
 
@@ -46,7 +46,7 @@ The tenant-facing API is split the same way: `suite_cloud.api.tenant` for what a
 | Record | What it is |
 | --- | --- |
 | **DNS Zone** | A domain you own (for example `frappemail.com`) plus the login for the DNS provider that manages it. Suite Cloud publishes server records there. You can have several zones; each cluster picks one. |
-| **Stalwart Store** | Where a cluster keeps its data: a PostgreSQL or MySQL database, an S3 bucket for message bodies, Redis for shared memory, and optionally a search engine. |
+| **Mail Store** | Where a cluster keeps its data: a PostgreSQL or MySQL database, an S3 bucket for message bodies, Redis for shared memory, and optionally a search engine. A cluster can also give its outbound spam scanner a Redis store. |
 | **Mail Region** | A place with a cluster, for example `bom` (Mumbai). Its code names the cluster's hosts under the DNS zone, and a Region points at one to place its tenants' mail. |
 | **Stalwart Cluster** | One mail service per Mail Region, shared by the tenants placed there: its public hostname (`mail.bom.frappemail.com`), its stores, its admin credentials and an SSH key for its servers. |
 | **Stalwart Node** | One server (VPS) that runs Stalwart for a cluster. Nodes share the same stores, so any node can serve any user. |

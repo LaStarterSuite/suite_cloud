@@ -521,12 +521,17 @@
    "group": "Used By",
    "link_doctype": "Stalwart Cluster",
    "link_fieldname": "in_memory_store"
+  },
+  {
+   "group": "Used By",
+   "link_doctype": "Stalwart Cluster",
+   "link_fieldname": "outbound_scan_store"
   }
  ],
- "modified": "2026-10-28 17:45:14.960660",
+ "modified": "2026-11-06 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Mail",
- "name": "Stalwart Store",
+ "name": "Mail Store",
  "owner": "Administrator",
  "permissions": [
   {

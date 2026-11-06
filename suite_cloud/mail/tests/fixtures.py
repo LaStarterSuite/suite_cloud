@@ -18,7 +18,7 @@ from suite_cloud.tests.fixtures import (
 def make_store(kind: str, type: str, title: str | None = None, **fields):
     doc = frappe.get_doc(
         {
-            "doctype": "Stalwart Store",
+            "doctype": "Mail Store",
             "title": title or f"{kind} {type}",
             "kind": kind,
             "type": type,
